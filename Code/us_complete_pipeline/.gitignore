@@ -1,0 +1,24 @@
+# Machine-specific runtime and generated run data
+.venv/
+work/
+
+# Disposable Python/editor/OS files
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.bak
+*.bak.*
+*.log
+*.tmp
+.DS_Store
+._*
+.ruff_cache/
+.coverage
+htmlcov/
+
+# External secrets: never include in project exports
+google_credentials.json
+service_account.json
+.env
+.env.*

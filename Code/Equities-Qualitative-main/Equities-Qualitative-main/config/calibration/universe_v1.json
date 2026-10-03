@@ -1,0 +1,9 @@
+{
+  "universe_version": "pilot-universe-v1",
+  "universe_type": "project-company-pilot",
+  "tickers": ["ZM", "PLTR", "EXEL", "INCY"],
+  "survivorship_status": "SURVIVORSHIP_COVERAGE_INCOMPLETE",
+  "minimum_liquidity": null,
+  "minimum_market_cap": null,
+  "membership_rule": "point_in_time_membership_required_for_production"
+}

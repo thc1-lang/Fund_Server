@@ -1,0 +1,32 @@
+{
+  "NVDA": {
+    "fiscal_year_end_month": 1,
+    "fiscal_year_end_day": 31,
+    "fiscal_year_label_convention": "ending_year",
+    "week_based": true,
+    "weeks_per_year": 53,
+    "source": "issuer_sec_calendar_metadata"
+  },
+  "0001045810": {
+    "fiscal_year_end_month": 1,
+    "fiscal_year_end_day": 31,
+    "fiscal_year_label_convention": "ending_year",
+    "week_based": true,
+    "weeks_per_year": 53,
+    "source": "issuer_sec_calendar_metadata"
+  },
+  "RMD": {
+    "fiscal_year_end_month": 6,
+    "fiscal_year_end_day": 30,
+    "fiscal_year_label_convention": "ending_year",
+    "week_based": false,
+    "source": "issuer_sec_calendar_metadata"
+  },
+  "0000943819": {
+    "fiscal_year_end_month": 6,
+    "fiscal_year_end_day": 30,
+    "fiscal_year_label_convention": "ending_year",
+    "week_based": false,
+    "source": "issuer_sec_calendar_metadata"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "outcome_version": "outcomes-v1",
+  "execution_lag": "next_trading_day_open",
+  "horizons_days": [21, 63, 126, 252],
+  "return_definitions": ["total_adjusted_return", "benchmark_excess_return"],
+  "risk_outcomes": ["maximum_drawdown", "realized_volatility", "worst_forward_return"],
+  "business_outcomes": ["forward_revenue_growth", "forward_operating_margin_change", "forward_fcf_margin_change", "forward_eps_growth", "guidance_accuracy"],
+  "market_data_status": "MARKET_DATA_PROVIDER_NOT_CONFIGURED"
+}

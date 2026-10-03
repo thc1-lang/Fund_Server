@@ -1,0 +1,36 @@
+{
+  "profile": "core_v1",
+  "profile_version": "core-v1.2",
+  "profile_name": "core_v1",
+  "created_date": "2026-09-24",
+  "calibration_status": "UNCALIBRATED_DESIGN_V1",
+  "description": "Transparent design-default evidence-backed quality profile with separate evidence and scoring coverage; not empirically calibrated.",
+  "scoring_version": "qualitative-scoring-v1.2",
+  "factor_rules_version": "factor-rules-v2",
+  "coverage_version": "coverage-v3",
+  "pillar_weights": {
+    "BUSINESS_QUALITY": 0.30,
+    "BUSINESS_TRAJECTORY": 0.20,
+    "MANAGEMENT_EXECUTION": 0.20,
+    "INSIDER_ALIGNMENT": 0.15,
+    "GOVERNANCE": 0.15
+  },
+  "minimum_overall_scoring_coverage": 0.70,
+  "minimum_pillar_scoring_coverage": {"BUSINESS_QUALITY": 0.70, "BUSINESS_TRAJECTORY": 0.70, "MANAGEMENT_EXECUTION": 0.70, "INSIDER_ALIGNMENT": 0.70, "GOVERNANCE": 0.70},
+  "critical_factor_keys": ["business_quality_revenue_state", "business_quality_demand_state"],
+  "dependency_groups": {
+    "revenue_state_and_trajectory": ["business_quality_revenue_state", "trajectory_revenue_trend"],
+    "demand_state_and_trajectory": ["business_quality_demand_state", "trajectory_demand_trend"],
+    "margins_state_and_trajectory": ["business_quality_margins_state", "trajectory_margins_trend"],
+    "qualitative_state_guidance": ["business_quality_guidance_state"],
+    "temporal_risks": ["trajectory_risk_trend"],
+    "guidance_outcome": ["management_guidance_reliability"],
+    "strategic_outcome": ["management_commitment_delivery"],
+    "operating_outcome": ["management_operating_execution"],
+    "capital_outcome": ["management_capital_allocation"],
+    "insider_ownership": ["insider_ownership_alignment"],
+    "insider_transactions": ["insider_transaction_activity"],
+    "insider_clusters": ["insider_cluster_activity"],
+    "governance_voting": ["governance_voting_control", "governance_class_structure"]
+  }
+}

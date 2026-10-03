@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qualitative-ir-downloader"
+version = "0.4.0"
+description = "Traceable, sequential investor-relations document collection"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+include = ["qualitative_ir_downloader*", "qualitative_analysis*", "insider_intelligence*", "management_intelligence*", "scoring_engine*", "research_output*", "empirical_validation*", "pipeline_runner*"]
+
+[project.scripts]
+qualitative-ir = "qualitative_ir_downloader.main:main"
+insider-baseline = "insider_intelligence.baseline_cli:main"
+management-intelligence = "management_intelligence.main:main"
+management-track-record = "management_intelligence.track_record_cli:main"
+management-governance = "management_intelligence.governance_cli:main"
+qualitative-score = "scoring_engine.main:main"
+research-output = "research_output.main:main"
+empirical-validation = "empirical_validation.main:main"
+qualitative-pipeline = "pipeline_runner.main:main"

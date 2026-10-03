@@ -1,0 +1,11 @@
+gspread>=6.2,<7
+google-auth>=2.38,<3
+playwright>=1.51,<2
+httpx>=0.28,<1
+beautifulsoup4>=4.13,<5
+python-dateutil>=2.9,<3
+pypdf>=5,<7
+tldextract>=5.3,<6
+faster-whisper>=1.2,<2
+reportlab>=4.4,<5
+imageio-ffmpeg>=0.6,<1

@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+artifacts/
+service_account*.json
+
+debug.log
+verified_ir.json
+
+debug.log
+verified_ir.json

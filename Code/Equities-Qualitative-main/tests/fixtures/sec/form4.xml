@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ownershipDocument>
+  <documentType>4</documentType>
+  <issuer>
+    <issuerCik>0001585521</issuerCik>
+    <issuerName>Zoom Communications, Inc.</issuerName>
+    <issuerTradingSymbol>ZM</issuerTradingSymbol>
+  </issuer>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerCik>0001000001</rptOwnerCik><rptOwnerName>Jane Doe</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship><isDirector>0</isDirector><isOfficer>1</isOfficer><officerTitle>Chief Financial Officer</officerTitle><isTenPercentOwner>0</isTenPercentOwner></reportingOwnerRelationship>
+  </reportingOwner>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-09-01</value></transactionDate>
+      <transactionCoding><transactionFormType>4</transactionFormType><transactionCode>P</transactionCode><aff10b5One>0</aff10b5One></transactionCoding>
+      <transactionAmounts><transactionShares><value>1000</value></transactionShares><transactionPricePerShare><value>60.00</value></transactionPricePerShare><transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode></transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>11000</value></sharesOwnedFollowingTransaction><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></postTransactionAmounts>
+    </nonDerivativeTransaction>
+    <nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-09-02</value></transactionDate>
+      <transactionCoding><transactionFormType>4</transactionFormType><transactionCode>S</transactionCode></transactionCoding>
+      <transactionAmounts><transactionShares><value>500</value></transactionShares><transactionPricePerShare><value>61.00</value></transactionPricePerShare><transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode></transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>10500</value></sharesOwnedFollowingTransaction><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></postTransactionAmounts>
+      <footnoteId id="F1"/>
+    </nonDerivativeTransaction>
+  </nonDerivativeTable>
+  <derivativeTable>
+    <derivativeTransaction>
+      <securityTitle><value>Employee Stock Option</value></securityTitle>
+      <transactionDate><value>2026-09-03</value></transactionDate>
+      <transactionCoding><transactionFormType>4</transactionFormType><transactionCode>M</transactionCode></transactionCoding>
+      <transactionAmounts><transactionShares><value>200</value></transactionShares><transactionPricePerShare><value>20.00</value></transactionPricePerShare><transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode></transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>200</value></sharesOwnedFollowingTransaction><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></postTransactionAmounts>
+      <underlyingSecurity><securityTitle><value>Common Stock</value></securityTitle><underlyingSecurityShares><value>200</value></underlyingSecurityShares></underlyingSecurity>
+      <exercisePrice><value>20.00</value></exercisePrice><expirationDate><value>2030-01-01</value></expirationDate>
+    </derivativeTransaction>
+  </derivativeTable>
+  <footnotes><footnote id="F1">The sale was effected pursuant to a Rule 10b5-1 trading plan.</footnote></footnotes>
+</ownershipDocument>

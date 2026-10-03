@@ -1,0 +1,35 @@
+# Secrets
+.env
+.env.*
+google_credentials.json
+service_account.json
+*credentials*.json
+*.pem
+*.key
+id_rsa
+id_ed25519
+secrets/
+credentials/
+
+# Python environments
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Runtime/generated files
+work/
+*.log
+*.tmp
+*.cache
+
+# Server folders not suitable for GitHub
+/Logs/
+/Backups/
+/recovery/
+
+# Fund data
+/Data/
