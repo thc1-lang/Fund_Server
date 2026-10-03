@@ -10,22 +10,35 @@ function Log($Message) {
     "$Time | $Message" | Out-File -FilePath $Log -Append -Encoding utf8
 }
 
+function Run-Git($Arguments) {
+    $Output = & git @Arguments 2>&1
+    $ExitCode = $LASTEXITCODE
+
+    $Output | Out-File -FilePath $Log -Append -Encoding utf8
+
+    if ($ExitCode -ne 0) {
+        throw "git $($Arguments -join ' ') failed with exit code $ExitCode"
+    }
+
+    return $Output
+}
+
 try {
     Log "Backup started"
 
-    git fetch origin 2>&1 | Out-File -FilePath $Log -Append
+    Run-Git @("fetch","origin") | Out-Null
 
-    $Local  = git rev-parse HEAD
-    $Remote = git rev-parse origin/main
+    $Local = (& git rev-parse HEAD).Trim()
+    $Remote = (& git rev-parse origin/main).Trim()
 
     if ($Local -ne $Remote) {
         Log "STOPPED: local main and origin/main differ. Manual review required."
         exit 1
     }
 
-    git add .
+    & git add .
 
-    git diff --cached --quiet
+    & git diff --cached --quiet
 
     if ($LASTEXITCODE -eq 0) {
         Log "No changes detected"
@@ -33,13 +46,9 @@ try {
     }
 
     $Stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    git commit -m "Automatic backup $Stamp" 2>&1 | Out-File -FilePath $Log -Append
 
-    git push origin main 2>&1 | Out-File -FilePath $Log -Append
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Git push failed"
-    }
+    Run-Git @("commit","-m","Automatic backup $Stamp") | Out-Null
+    Run-Git @("push","origin","main") | Out-Null
 
     Log "Backup completed successfully"
 }
