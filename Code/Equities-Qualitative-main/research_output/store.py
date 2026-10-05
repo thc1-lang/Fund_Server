@@ -7,7 +7,7 @@ from .renderer_markdown import render_markdown
 
 def output_paths(d: CompanyResearchDossier, root: str|Path="artifacts/research_output") -> tuple[Path,Path]:
     folder=Path(root)/d.ticker; folder.mkdir(parents=True,exist_ok=True)
-    stem=f"{d.ticker}_{d.as_of_date}_{d.profile_version}_dossier"
+    stem=f"{d.ticker}_{d.as_of_date}_{d.profile_version}_qualitative_analysis"
     return folder/(stem+".md"),folder/(stem+".json")
 def _strip_runtime(x):
     if isinstance(x,dict): return {k:_strip_runtime(v) for k,v in x.items() if k not in {"generated_at"}}

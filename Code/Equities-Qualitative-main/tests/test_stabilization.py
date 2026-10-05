@@ -52,6 +52,19 @@ class IdentityTests(unittest.TestCase):
             ir_state.remove(root,'CARG')
             self.assertIsNone(ir_state.recover(root,stock))
 
+    def test_operator_repair_replaces_invalidated_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp); stock=Stock('SE','Sea Limited','',0)
+            ir_state.upsert(root,stock,IRCandidate('https://investor.sea.co.uk/',100,['Incorrect prior identity'],True))
+            ir_state.remove(root,'SE')
+            replacement=IRCandidate('https://www.sea.com/investor/home',100,['Explicit operator verification'],True,corporate_url='https://www.sea.com/')
+            ir_state.upsert(root,stock,replacement,source='operator_verification',confirmed=True)
+            record=ir_state.read_store(root)['SE']
+            self.assertEqual(record['official_ir_url'],replacement.url)
+            self.assertEqual(record['evidence'],['Explicit operator verification'])
+            self.assertEqual(record['verification_source'],'operator_verification')
+            self.assertFalse(record['invalidated_explicitly'])
+
     def test_corrupt_store_never_overwritten(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);path=root/'verified_ir.json';path.write_text('{broken')

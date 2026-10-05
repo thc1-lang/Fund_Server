@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from qualitative_analysis.evidence import EvidenceValidationError, assert_valid_claim, validate_claim
 from qualitative_analysis.extraction_models import QualitativeClaim, register_dimension
@@ -138,6 +139,26 @@ class QualitativeExtractionTests(unittest.TestCase):
             state = store.get_document_state(doc.document_id)
             self.assertEqual(state["source_content_hash"], doc.content_hash)
 
+    def test_store_retries_transient_windows_replace_lock(self):
+        doc = _document("Revenue increased 12% year over year.")
+        claims = extract_document(doc).claims
+        with tempfile.TemporaryDirectory() as temp:
+            store = ExtractionStore(Path(temp))
+            original_replace = __import__("qualitative_analysis.extraction_store", fromlist=["os"]).os.replace
+            calls = 0
+
+            def locked_once(source, destination):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise PermissionError("file is temporarily locked")
+                return original_replace(source, destination)
+
+            with patch("qualitative_analysis.extraction_store.os.replace", side_effect=locked_once), patch("qualitative_analysis.extraction_store.time.sleep"):
+                store.upsert_many(claims)
+            self.assertGreaterEqual(calls, 2)
+            self.assertEqual(len(store.get_by_document_id(doc.document_id)), len(claims))
+
     def test_content_hash_and_extraction_version_change_require_replacement(self):
         original = _document("Revenue increased 12% year over year.", "news_release")
         original.document_id = "stable-document-id"
@@ -168,5 +189,4 @@ class QualitativeExtractionTests(unittest.TestCase):
         identities = {(c.dimension, c.evidence_text, c.source_location["start_char"]) for c in result.claims}
         self.assertEqual(len(identities), len(result.claims))
         self.assertEqual(len([c for c in result.claims if c.dimension == "demand"]), 1)
-
 

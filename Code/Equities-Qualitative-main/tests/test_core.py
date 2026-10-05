@@ -2,6 +2,7 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from pypdf import PdfWriter
 from qualitative_ir_downloader.filesystem import sanitize_filename, company_folder, document_path
 from qualitative_ir_downloader.google_sheets import parse_rows
@@ -11,7 +12,8 @@ from qualitative_ir_downloader.models import Stock, Link, CollectionError
 from qualitative_ir_downloader.extraction import extract_date, release_link
 from qualitative_ir_downloader.pdf_utils import validate_pdf
 from qualitative_ir_downloader.main import select_stocks, parser
-from qualitative_ir_downloader.config import DEFAULT_SERVICE_ACCOUNT_PATH
+from qualitative_ir_downloader.config import Config, DEFAULT_SERVICE_ACCOUNT_PATH
+from qualitative_ir_downloader.google_sheets import read_stocks
 
 class CoreTests(unittest.TestCase):
     def test_atomic_json_retries_transient_windows_lock(self):
@@ -97,6 +99,15 @@ class CoreTests(unittest.TestCase):
                          "Short Secondary Summary")
         self.assertEqual(parse_rows([["ABC", "Acme"]], "Short Secondary Summary")[0].selection_side,
                          "short")
+
+    def test_sheet_refresh_recreates_deleted_cache_root(self):
+        with tempfile.TemporaryDirectory() as temp, patch("gspread.service_account") as connect:
+            book = connect.return_value.open_by_key.return_value
+            book.worksheet.return_value.get.return_value = [["ABC", "Acme"]]
+            cache_root = Path(temp) / "missing" / "_Acquisition_Cache"
+            stocks = read_stocks(Config(download_root=cache_root))
+            self.assertEqual(len(stocks), 4)
+            self.assertTrue((cache_root / "stock_metadata.json").exists())
 
     def test_ir_scoring_rejects_information_sites(self):
         stock = Stock("ACME", "Acme", "Safe", 4)

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import defaultdict
+from dataclasses import asdict
 from pathlib import Path
+
+from qualitative_ir_downloader.config import Config, DOWNLOAD_ROOT, WORKSHEETS
+from qualitative_ir_downloader.google_sheets import read_stocks
+from qualitative_ir_downloader.models import Stock
 
 from .runner import (
     DEFAULT_DATA_ROOT,
@@ -22,6 +28,17 @@ def build_parser() -> argparse.ArgumentParser:
     scope = parser.add_mutually_exclusive_group(required=True)
     scope.add_argument("--ticker")
     scope.add_argument("--tickers", nargs="+")
+    scope.add_argument(
+        "--from-spreadsheet",
+        action="store_true",
+        help="Run every unique ticker listed in the configured secondary-summary worksheets",
+    )
+    parser.add_argument(
+        "--worksheet",
+        action="append",
+        choices=WORKSHEETS,
+        help="Limit --from-spreadsheet to one or more named worksheets (repeatable)",
+    )
     parser.add_argument("--as-of-date", required=True)
     parser.add_argument("--profile", default="core_v1")
     parser.add_argument("--mode", choices=("existing", "fresh"), default="existing")
@@ -38,15 +55,61 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _unique_tickers(stocks: list[Stock]) -> list[str]:
+    """Keep workbook order while producing one production folder per ticker."""
+    seen: set[str] = set()
+    tickers: list[str] = []
+    for stock in stocks:
+        ticker = stock.ticker.upper()
+        if ticker not in seen:
+            seen.add(ticker)
+            tickers.append(ticker)
+    return tickers
+
+
+def _selection_sources(stocks: list[Stock]) -> dict[str, list[dict[str, object]]]:
+    """Preserve all worksheet locations when a ticker appears in multiple lists."""
+    sources: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for stock in stocks:
+        sources[stock.ticker.upper()].append(asdict(stock))
+    return dict(sources)
+
+
+def _read_spreadsheet_selection(args: argparse.Namespace) -> list[Stock]:
+    download_root = Path(args.download_root) if args.download_root else DOWNLOAD_ROOT
+    stocks = read_stocks(Config(download_root=download_root))
+    selected_worksheets = set(args.worksheet or WORKSHEETS)
+    return [stock for stock in stocks if stock.worksheet in selected_worksheets]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    tickers = [args.ticker] if args.ticker else list(args.tickers or [])
+    if args.worksheet and not args.from_spreadsheet:
+        build_parser().error("--worksheet requires --from-spreadsheet")
+
+    selected_stocks: list[Stock] = []
+    if args.from_spreadsheet:
+        try:
+            selected_stocks = _read_spreadsheet_selection(args)
+        except Exception as exc:
+            _print_pipeline_exception(exc, verbose=args.verbose)
+            print(f"SPREADSHEET SELECTION FAILED: {exc}")
+            return EXIT_INVALID_CONFIGURATION
+        tickers = _unique_tickers(selected_stocks)
+        if not tickers:
+            print("No valid tickers were found in the selected worksheet(s).")
+            return EXIT_SUCCESS
+        print(f"Selected {len(tickers)} unique ticker(s) from {len(selected_stocks)} worksheet row(s).")
+    else:
+        tickers = [args.ticker] if args.ticker else list(args.tickers or [])
     results = []
     errors = []
     for ticker in tickers:
         values = vars(args).copy()
         values.pop("ticker", None)
         values.pop("tickers", None)
+        values.pop("from_spreadsheet", None)
+        values.pop("worksheet", None)
         values["ticker"] = ticker
         # An explicit --ticker is authoritative. Batch --tickers continues to
         # use the worksheet universe and its selection metadata.
@@ -61,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         results.append(result)
         _print_result(result)
-    if len(tickers) > 1:
+    if len(tickers) > 1 or args.from_spreadsheet:
         batch_manifest = write_batch_artifacts(
             data_root=Path(args.data_root),
             as_of_date=args.as_of_date,
@@ -69,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             tickers=tickers,
             results=results,
             errors=errors,
+            selection_sources=_selection_sources(selected_stocks),
         )
         for result in results:
             result.batch_manifest_path = str(batch_manifest)
@@ -81,7 +145,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def write_batch_artifacts(*, data_root: Path, as_of_date: str, profile: str,
-                          tickers: list[str], results: list, errors: list[dict]) -> Path:
+                          tickers: list[str], results: list, errors: list[dict],
+                          selection_sources: dict[str, list[dict[str, object]]] | None = None) -> Path:
     """Write only cross-company metadata outside the isolated ticker roots."""
     batch_root = data_root / "_Batch_Runs" / f"{as_of_date}_{len(tickers)}_stock_run"
     batch_root.mkdir(parents=True, exist_ok=True)
@@ -92,6 +157,7 @@ def write_batch_artifacts(*, data_root: Path, as_of_date: str, profile: str,
         "as_of_date": as_of_date,
         "profile": profile,
         "tickers": [ticker.upper() for ticker in tickers],
+        "selection_sources": selection_sources or {},
         "results": [result.to_dict() for result in results],
         "errors": errors,
     }

@@ -34,6 +34,16 @@ FIXTURE = """
 """
 
 
+COMPACT_SEC_ROSTER_FIXTURE = """
+<html><body>
+<table><tr><td>Alex Example Age: 55 Director Since: 2020</td></tr></table>
+<table><tr><td>NEO</td><td>Title</td></tr>
+<tr><td>Jordan Founder</td><td>Chief Executive Officer</td></tr>
+<tr><td>Casey Finance</td><td>Chief Financial Officer</td></tr></table>
+</body></html>
+"""
+
+
 class ManagementIntelligenceTests(unittest.TestCase):
     def filing(self):
         return SECFiling(
@@ -70,6 +80,14 @@ class ManagementIntelligenceTests(unittest.TestCase):
         alex = next(person for person in result.people if person.full_name == "Alex Example")
         self.assertTrue(any("Chief Executive Officer" in role for role in alex.current_roles))
         self.assertTrue(any(board.person_id == alex.person_id for board in result.boards))
+
+    def test_compact_sec_roster_tables_are_not_rejected_for_lacking_conventional_headers(self):
+        result = parse_proxy_people(COMPACT_SEC_ROSTER_FIXTURE, self.filing(), "ExampleCo")
+        names = {person.full_name for person in result.people}
+        self.assertEqual(names, {"Alex Example", "Jordan Founder", "Casey Finance"})
+        alex = next(person for person in result.people if person.full_name == "Alex Example")
+        self.assertIn("director", alex.role_categories)
+        self.assertEqual(alex.current_since, "2020")
 
     def test_identity_key_is_deterministic_and_normalized(self):
         self.assertEqual(normalize_name("Dr. J. Example, Ph.D."), "j example")

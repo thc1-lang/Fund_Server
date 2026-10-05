@@ -25,6 +25,9 @@ def read_stocks(config: Config, worksheet: str | None = None, ticker: str | None
     from dataclasses import asdict
     from .filesystem import atomic_json
     cache=config.download_root/'stock_metadata.json'
+    # A clean production rebuild may start with the entire download root
+    # removed.  Create it before the atomic cache write below.
+    cache.parent.mkdir(parents=True, exist_ok=True)
     cached={}
     full_fetched_at=0.0
     try:

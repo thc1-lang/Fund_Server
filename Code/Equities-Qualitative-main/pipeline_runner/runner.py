@@ -51,7 +51,7 @@ FOLDER_NAMES = {
     "management": "07_Management_Intelligence",
     "governance": "08_Board_Governance",
     "scoring": "09_Scoring",
-    "dossier": "10_Research_Dossier",
+    "dossier": "Qualitative_Analysis",
     "summaries": "11_Run_Summaries",
 }
 
@@ -790,7 +790,7 @@ class PipelineRunner:
 
     def _source_dossier_paths(self, profile_version: str) -> tuple[Path, Path]:
         directory = self.output_root / self.ticker
-        stem = f"{self.ticker}_{self.as_of_date}_{profile_version}_dossier"
+        stem = f"{self.ticker}_{self.as_of_date}_{profile_version}_qualitative_analysis"
         return directory / f"{stem}.json", directory / f"{stem}.md"
 
     def _dossier_paths(self, profile_version: str) -> tuple[Path, Path]:

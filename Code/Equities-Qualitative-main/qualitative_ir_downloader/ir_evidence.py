@@ -14,7 +14,9 @@ def noise(url):
 
 def brand_domain(url,name):
     identity=identify(name);brand=fold(DOMAIN(url).domain)
-    aliases=[fold(a) for a in identity.brand_candidates]
+    # Very short names (for example, Sea) are too ambiguous to establish
+    # corporate ownership from a matching registrable domain alone.
+    aliases=[fold(a) for a in identity.brand_candidates if len(fold(a))>=4]
     if brand in aliases:return 2
     # Compound brand domains are useful candidates, but are weaker ownership evidence.
     return 1 if any(len(a)>=4 and brand.startswith(a) and brand[len(a):] in {'semi','semiconductor','tech','technology','networks','medicines','holdings'} for a in aliases) else 0

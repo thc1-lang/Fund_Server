@@ -3,6 +3,7 @@ import json
 import os
 import runpy
 import sys
+import types
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -305,6 +306,37 @@ def test_direct_analysis_reports_batch_error(alerts, monkeypatch):
         "Indicator analysis failed",
     ]
     assert "GDP: Missing data" in alerts[-1][0][0]
+
+
+def test_open_workbook_uses_quota_backoff(monkeypatch):
+    import us_indicator_analysis as analysis
+
+    opened = object()
+    calls = []
+
+    class Client:
+        def open_by_key(self, spreadsheet_id):
+            calls.append(("open", spreadsheet_id))
+            return opened
+
+    fake_gspread = types.SimpleNamespace(
+        service_account=lambda *, filename: calls.append(("credentials", filename))
+        or Client()
+    )
+    monkeypatch.setitem(sys.modules, "gspread", fake_gspread)
+    backoff_calls = []
+
+    def backoff(fn, **kwargs):
+        backoff_calls.append(kwargs)
+        return fn()
+
+    monkeypatch.setattr(analysis, "call_with_backoff", backoff)
+
+    result = analysis.open_workbook(analysis.EngineConfig("sheet-id", "credentials.json"))
+
+    assert result is opened
+    assert calls == [("credentials", "credentials.json"), ("open", "sheet-id")]
+    assert backoff_calls == [{"operation_name": "open_workbook"}]
 
 
 def test_parent_suppresses_child_notifications(alerts, monkeypatch, tmp_path):

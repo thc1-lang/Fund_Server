@@ -76,6 +76,21 @@ class DiscoveryIdentityTests(unittest.TestCase):
             d.corporate_search_identity(urls,'ResMed')
             self.assertEqual(d.ecosystem.official_corporate_domain,'resmed.com')
 
+    def test_short_company_name_requires_full_legal_identity(self):
+        from qualitative_ir_downloader.ir_evidence import brand_domain
+        self.assertEqual(brand_domain('https://www.sea.co.uk/', 'Sea Limited'), 0)
+        with tempfile.TemporaryDirectory() as temp:
+            d=IRDiscovery(SimpleNamespace(config=Config(download_root=Path(temp))))
+            d.ticker='SE'
+            official='https://www.sea.com/investor/home'
+            unrelated='https://www.sea.co.uk/'
+            d.search_evidence={
+                official:{'title':'Sea | Investor Relations','snippet':'Sea Limited (NYSE: SE) is a global technology company.'},
+                unrelated:{'title':'Sea','snippet':'Welcome to Sea.'},
+            }
+            d.corporate_search_identity([unrelated,official],'Sea Limited')
+            self.assertEqual(d.ecosystem.official_corporate_domain,'sea.com')
+
     def test_search_discovered_same_domain_ir_subdomain_is_promoted_generically(self):
         with tempfile.TemporaryDirectory() as temp:
             d=IRDiscovery(SimpleNamespace(config=Config(download_root=Path(temp))))

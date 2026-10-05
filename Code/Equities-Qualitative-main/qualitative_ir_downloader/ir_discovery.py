@@ -29,6 +29,12 @@ def corporate_domains(company):
 def candidate_domain_score(url,company):
     return rank_result(url,company)
 
+def explicit_legal_identity(text: str, company: str) -> bool:
+    """Recognize a full legal name without trusting a short brand by itself."""
+    from .company_identity import fold
+    legal_name = fold(company)
+    return len(legal_name) >= 6 and legal_name in fold(text)
+
 def corporate_identity(url: str, title: str, body: str, company: str, search_support: str = '', ticker: str = '') -> bool:
     """Require a branded registrable domain and company identity in title/content."""
     if rejected_domain(url):
@@ -36,7 +42,8 @@ def corporate_identity(url: str, title: str, body: str, company: str, search_sup
     tokens = company_tokens(company)
     brand = DOMAIN(url).domain.lower().replace("-", "")
     branded = brand_domain(url, company) >= 1
-    if not branded:
+    legal_name_present = explicit_legal_identity(title + " " + body, company)
+    if not branded and not legal_name_present:
         return False
     exact = all(t in title.casefold() for t in tokens) and all(t in body.casefold() for t in tokens)
     navigation = sum(bool(re.search(r"\b" + word + r"\b", body, re.I)) for word in ("about", "investors?", "careers", "products?"))
@@ -44,7 +51,7 @@ def corporate_identity(url: str, title: str, body: str, company: str, search_sup
     supported_brand = (identity.brand_match(title) and identity.brand_match(body) and navigation>=2
         and identity.legal_match(search_support) and bool(re.search(r'investor(?:s| relations)',search_support,re.I)))
     legal_footer = brand_domain(url,company)==2 and identity.legal_match(body) and navigation>=2 and bool(re.search(r'(?:©|copyright).{0,80}'+re.escape(identity.normalized_company_name),body,re.I))
-    return exact or (identity.legal_match(body) and identity.brand_match(title) and navigation>=2) or supported_brand or legal_footer
+    return legal_name_present or exact or (identity.legal_match(body) and identity.brand_match(title) and navigation>=2) or supported_brand or legal_footer
 
 def endorsed_candidate(corporate_url: str, link: Link) -> IRCandidate | None:
     """Direct Investors navigation is ownership evidence even when IR is inaccessible."""
@@ -130,12 +137,17 @@ class IRDiscovery:
             dedicated = d.subdomain.lower() in {'ir', 'investor', 'investors'}
             if d.subdomain not in ('','www') and not dedicated:
                 continue
-            if not brand_domain(url,company):
+            legal_name_present = explicit_legal_identity(title + " " + snippet, company)
+            if not brand_domain(url,company) and not legal_name_present:
                 continue
             search_identity = identity.brand_match(title) and (
                 identity.legal_match(snippet)
                 or bool(self.ticker and re.search(r'\b'+re.escape(self.ticker)+r'\b', title+' '+snippet, re.I))
                 or bool(re.search(r'investor(?:s| relations)', title, re.I))
+            )
+            search_identity = search_identity or (
+                legal_name_present
+                and bool(re.search(r'investor(?:s| relations)', title + ' ' + snippet, re.I))
             )
             if search_identity:
                 self.ecosystem.official_corporate_domain=d.top_domain_under_public_suffix

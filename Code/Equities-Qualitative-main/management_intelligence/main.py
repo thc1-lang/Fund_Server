@@ -163,6 +163,7 @@ class ManagementIntelligenceProvider:
         self.insider_store = insider_store or InsiderStore()
         self.identity = ManagementIdentityResolver()
         self.last_counts: dict[str, dict[str, int]] = {}
+        self.last_warnings: list[str] = []
 
     def acquire(self, ticker: str, *, force: bool = False, as_of_date: str | None = None) -> ManagementParseResult:
         ticker = ticker.strip().upper()
@@ -246,6 +247,7 @@ class ManagementIntelligenceProvider:
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
         self.store.record_run(run)
+        self.last_warnings = list(run.warnings)
         return results
 
 
@@ -271,6 +273,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{ticker}: people={len(result.people)} roles={len(result.roles)} career={len(result.career)} boards={len(result.boards)}")
         for warning in result.warnings:
             print(f"WARNING {ticker}: {warning}")
+    # Per-issuer isolation keeps a batch useful, but swallowing those errors
+    # made pipeline manifests say merely "without records".  Surface the
+    # precise affected ticker and cause for the orchestrator and operator.
+    for warning in provider.last_warnings:
+        if warning not in [item for result in results.values() for item in result.warnings]:
+            print(f"WARNING {warning}")
     return 0 if results else 1
 
 

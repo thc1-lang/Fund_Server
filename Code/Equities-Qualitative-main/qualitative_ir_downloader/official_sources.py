@@ -40,6 +40,22 @@ SOURCE_EVENTS = "OFFICIAL_IR_EVENTS"
 
 SEC_FORMS = ("10-K", "10-Q", "8-K", "DEF 14A")
 SEC_USER_AGENT = "Allen & Cooper Insider Intelligence nicholaslallen1@gmail.com"
+# A verified main IR page is still the primary discovery source.  These are
+# fallback probes, so they must never turn one slow issuer into dozens of
+# sequential network timeouts.
+MAX_ROUTE_PROBES = 10
+ROUTE_PRIORITY_PATHS = (
+    "financial-info/financial-reports",
+    "financial-info",
+    "financial-results",
+    "quarterly-earnings/financial-results",
+    "news",
+    "newsroom",
+    "press-releases",
+    "news-events/press-releases",
+    "events",
+    "events-and-presentations",
+)
 
 
 @dataclass(frozen=True)
@@ -442,9 +458,20 @@ class OfficialSourceStrategy:
 
     async def discover(self) -> dict:
         routes = self.routes()
+        # Cover the most common financial, newsroom, and event endpoints on
+        # the verified primary host before trying less common aliases.
+        def route_priority(route: OfficialRoute) -> tuple[int, int, str]:
+            path = urlsplit(route.url).path.strip("/").casefold()
+            try:
+                path_rank = ROUTE_PRIORITY_PATHS.index(path)
+            except ValueError:
+                path_rank = len(ROUTE_PRIORITY_PATHS)
+            primary_rank = 0 if route.discovered_from == self.primary_url else 1
+            return primary_rank, path_rank, route.url
+        routes.sort(key=route_priority)
         # Keep route probing sequential and bounded, matching the rest of the
         # acquisition layer's politeness and retry model.
-        for route in routes:
+        for route in routes[:MAX_ROUTE_PROBES]:
             await self._observe_route(route)
         await self.discover_sec()
         for observation in self.observations:

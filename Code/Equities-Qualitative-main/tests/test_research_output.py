@@ -7,7 +7,7 @@ from pathlib import Path
 
 from research_output.assembler import assemble_dossier
 from research_output.renderer_markdown import render_markdown
-from research_output.store import write_dossier
+from research_output.store import output_paths, write_dossier
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -139,6 +139,13 @@ class ResearchOutputFixtureTests(unittest.TestCase):
         self.assertFalse(first["unchanged"])
         self.assertTrue(second["unchanged"])
         self.assertEqual(len(rows), 1)
+
+    def test_report_filenames_describe_qualitative_analysis(self):
+        root = self._fixture()
+        dossier = assemble_dossier("ZZ", "2026-09-24", artifacts_root=root)
+        markdown, json_output = output_paths(dossier, root / "out")
+        self.assertEqual(markdown.name, "ZZ_2026-09-24_core-v1.2_qualitative_analysis.md")
+        self.assertEqual(json_output.name, "ZZ_2026-09-24_core-v1.2_qualitative_analysis.json")
 
     def test_unknown_governance_right_is_not_absence_and_no_section_padding(self):
         root = self._fixture(); d = assemble_dossier("ZZ", "2026-09-24", artifacts_root=root)

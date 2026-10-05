@@ -7,10 +7,12 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from pipeline_runner.models import StageStatus
-from pipeline_runner.main import _print_result, build_parser, write_batch_artifacts
+from pipeline_runner.main import _print_result, _selection_sources, _unique_tickers, build_parser, main as pipeline_main, write_batch_artifacts
 from pipeline_runner.runner import DEFAULT_DATA_ROOT, FOLDER_NAMES, PipelineRunner
+from qualitative_ir_downloader.models import Stock
 
 
 class PipelineRunnerTests(unittest.TestCase):
@@ -33,8 +35,8 @@ class PipelineRunnerTests(unittest.TestCase):
             self._write(relative, {"ticker": "ZM", "id": relative})
         dossier_dir = self.output / "ZM"
         dossier_dir.mkdir(parents=True, exist_ok=True)
-        (dossier_dir / "ZM_2026-09-24_core-v1.2_dossier.json").write_text("{}", encoding="utf-8")
-        (dossier_dir / "ZM_2026-09-24_core-v1.2_dossier.md").write_text("# ZM", encoding="utf-8")
+        (dossier_dir / "ZM_2026-09-24_core-v1.2_qualitative_analysis.json").write_text("{}", encoding="utf-8")
+        (dossier_dir / "ZM_2026-09-24_core-v1.2_qualitative_analysis.md").write_text("# ZM", encoding="utf-8")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -171,10 +173,10 @@ class PipelineRunnerTests(unittest.TestCase):
         root = Path(result.production_root)
         for folder in FOLDER_NAMES.values():
             self.assertTrue((root / folder).exists(), folder)
-        self.assertTrue((root / "10_Research_Dossier" / "ZM_2026-09-24_core-v1.2_dossier.json").exists())
+        self.assertTrue((root / "Qualitative_Analysis" / "ZM_2026-09-24_core-v1.2_qualitative_analysis.json").exists())
         self.assertTrue((root / "11_Run_Summaries" / "Pipeline" / "ZM_2026-09-24_pipeline_run.json").exists())
         self.assertFalse((self.data_root / "ZM_2026-09-24_pipeline_run.json").exists())
-        self.assertFalse((self.data_root / "ZM_2026-09-24_core-v1.2_dossier.json").exists())
+        self.assertFalse((self.data_root / "ZM_2026-09-24_core-v1.2_qualitative_analysis.json").exists())
         self.assertFalse(list((root).glob("*.json")))
         self.assertFalse(list((root).glob("*.md")))
 
@@ -351,8 +353,8 @@ class PipelineRunnerTests(unittest.TestCase):
             elif module == "research_output.main":
                 output = Path(args[args.index("--output-root") + 1]) / "PLTR"
                 output.mkdir(parents=True, exist_ok=True)
-                (output / "PLTR_2026-09-25_core-v1.2_dossier.json").write_text("{}", encoding="utf8")
-                (output / "PLTR_2026-09-25_core-v1.2_dossier.md").write_text("# PLTR", encoding="utf8")
+                (output / "PLTR_2026-09-25_core-v1.2_qualitative_analysis.json").write_text("{}", encoding="utf8")
+                (output / "PLTR_2026-09-25_core-v1.2_qualitative_analysis.md").write_text("# PLTR", encoding="utf8")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         result = PipelineRunner("PLTR", "2026-09-25", mode="fresh", artifacts_root=self.root,
@@ -424,8 +426,8 @@ class PipelineRunnerTests(unittest.TestCase):
             self._write(f"scoring_engine/company_scores.jsonl", {"ticker": ticker, "profile": "core_v1", "profile_version": "core-v1.2"})
             dossier_dir = self.output / ticker
             dossier_dir.mkdir(parents=True, exist_ok=True)
-            (dossier_dir / f"{ticker}_2026-09-24_core-v1.2_dossier.json").write_text("{}", encoding="utf-8")
-            (dossier_dir / f"{ticker}_2026-09-24_core-v1.2_dossier.md").write_text(f"# {ticker}", encoding="utf-8")
+            (dossier_dir / f"{ticker}_2026-09-24_core-v1.2_qualitative_analysis.json").write_text("{}", encoding="utf-8")
+            (dossier_dir / f"{ticker}_2026-09-24_core-v1.2_qualitative_analysis.md").write_text(f"# {ticker}", encoding="utf-8")
             results.append(PipelineRunner(ticker, "2026-09-24", artifacts_root=self.root,
                                            output_root=self.output, data_root=self.data_root,
                                            executor=self._executor([])).run())
@@ -437,6 +439,56 @@ class PipelineRunnerTests(unittest.TestCase):
                          {path.name for path in self.data_root.iterdir() if path.name != "_Batch_Runs"})
         self.assertTrue((batch_manifest.parent / "batch_summary.md").exists())
         self.assertTrue(all(result.batch_manifest_path == str(batch_manifest) for result in results))
+
+    def test_spreadsheet_batch_preserves_sheet_order_and_writes_one_result_per_ticker(self):
+        stocks = [
+            Stock("DAVE", "DAVE INC", "Safe Secondary Summary", 4),
+            Stock("CRDO", "Credo Technology Group", "Safe Secondary Summary", 5),
+            Stock("CRDO", "Credo Technology Group", "High Growth Potential Secondary Summary", 5),
+            Stock("ARQT", "Arcutis Biotherapeutics", "High Growth Potential Secondary Summary", 4),
+        ]
+        self.assertEqual(_unique_tickers(stocks), ["DAVE", "CRDO", "ARQT"])
+        self.assertEqual(len(_selection_sources(stocks)["CRDO"]), 2)
+
+        calls = []
+
+        class Result:
+            exit_code = 0
+            final_status = StageStatus.SUCCESS
+            batch_manifest_path = ""
+
+            def __init__(self, ticker):
+                self.ticker = ticker
+
+            def to_dict(self):
+                return {"ticker": self.ticker, "status": "SUCCESS"}
+
+        class FakeRunner:
+            def __init__(self, **kwargs):
+                calls.append(kwargs)
+                self.ticker = kwargs["ticker"]
+
+            def run(self):
+                return Result(self.ticker)
+
+        with patch("pipeline_runner.main.read_stocks", return_value=stocks) as read_stocks, \
+             patch("pipeline_runner.main.PipelineRunner", FakeRunner), \
+             patch("pipeline_runner.main._print_result"):
+            code = pipeline_main([
+                "--from-spreadsheet",
+                "--worksheet", "Safe Secondary Summary",
+                "--worksheet", "High Growth Potential Secondary Summary",
+                "--as-of-date", "2026-10-04",
+                "--data-root", str(self.data_root),
+            ])
+
+        self.assertEqual(code, 0)
+        read_stocks.assert_called_once()
+        self.assertEqual([call["ticker"] for call in calls], ["DAVE", "CRDO", "ARQT"])
+        self.assertTrue(all(call["manual_ticker"] is False for call in calls))
+        manifest = json.loads((self.data_root / "_Batch_Runs" / "2026-10-04_3_stock_run" / "batch_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["tickers"], ["DAVE", "CRDO", "ARQT"])
+        self.assertEqual(len(manifest["selection_sources"]["CRDO"]), 2)
 
 
 if __name__ == "__main__":

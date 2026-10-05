@@ -48,12 +48,20 @@ def upsert(root, stock, candidate, *, source="discovery", confirmed=False, verif
     if old.get("official") and not previous: raise ValueError("Conflicting cached identity requires explicit repair")
     if previous and (previous.officiality_score > candidate.officiality_score or previous.url != candidate.url): return
     now=datetime.now(timezone.utc).isoformat()
-    first=old.get("first_verified_at") or old.get("verified_at") or verified_at or (now if source=="discovery" else None)
+    # An explicit invalidation means the old URL was rejected.  Do not carry
+    # its evidence, timestamps, or provenance into the replacement record.
+    # Otherwise a repaired identity can misleadingly claim support from the
+    # very site that was ruled out.
+    replacing_invalidated = old.get("invalidated_explicitly") is True
+    prior_evidence = [] if replacing_invalidated else old.get("evidence", [])
+    first = verified_at or (now if replacing_invalidated or source != "discovery" else None)
+    if first is None:
+        first = old.get("first_verified_at") or old.get("verified_at") or now
     data[key]={**old, "ticker":stock.ticker,"company_name":stock.company_name,"official_ir_url":candidate.url,
         "official_corporate_url":candidate.corporate_url or old.get("official_corporate_url"),
         "official":True,"invalidated_explicitly":False,"officiality_score":candidate.officiality_score,
-        "evidence":list(dict.fromkeys(old.get("evidence",[])+candidate.evidence)),
-        "verification_source":old.get("verification_source") or source,
+        "evidence":list(dict.fromkeys(prior_evidence + candidate.evidence)),
+        "verification_source":source if replacing_invalidated else old.get("verification_source") or source,
         "first_verified_at":first,"verified_at":first,"first_recorded_at":old.get("first_recorded_at",now),
         "last_confirmed_at":now if confirmed else old.get("last_confirmed_at")}
     atomic_json(cache_path(root),data)
@@ -106,4 +114,4 @@ if __name__ == "__main__":
     else:
         if not args.company or not args.ir_url: parser.error("set requires --company and --ir-url")
         stock = Stock(args.ticker, args.company, "", 0)
-        upsert(args.root, stock, IRCandidate(args.ir_url, args.officiality, ["Explicit operator verification"], True, corporate_url=args.corporate_url, content_validated=True))
+        upsert(args.root, stock, IRCandidate(args.ir_url, args.officiality, ["Explicit operator verification"], True, corporate_url=args.corporate_url, content_validated=True), source="operator_verification", confirmed=True)

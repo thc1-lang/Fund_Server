@@ -15229,8 +15229,11 @@ INDICATOR_ENGINES: dict[str, Callable[[Any], Any]] = {
 def open_workbook(config: EngineConfig) -> Any:
     import gspread
 
-    return gspread.service_account(filename=config.service_account_path).open_by_key(
-        config.spreadsheet_id
+    return call_with_backoff(
+        lambda: gspread.service_account(
+            filename=config.service_account_path
+        ).open_by_key(config.spreadsheet_id),
+        operation_name="open_workbook",
     )
 
 

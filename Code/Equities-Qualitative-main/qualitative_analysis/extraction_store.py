@@ -5,10 +5,29 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Iterable
 
 from .extraction_models import QualitativeClaim
+
+
+def _replace_with_retry(source: Path, destination: Path, *, attempts: int = 5) -> None:
+    """Atomically replace a JSONL artifact, tolerating brief Windows sharing locks.
+
+    Antivirus, indexers, and file previews can momentarily hold the existing
+    artifact open.  The temporary file is already fully written, so a short
+    bounded retry preserves atomicity without turning a transient lock into a
+    partial extraction run.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.05 * (2 ** attempt))
 
 
 class ExtractionStore:
@@ -97,7 +116,7 @@ class ExtractionStore:
             with temp_path.open("w", encoding="utf-8", newline="\n") as handle:
                 for claim in ordered:
                     handle.write(json.dumps(claim.to_dict(), ensure_ascii=False, sort_keys=True) + "\n")
-            os.replace(temp_path, self.claims_path)
+            _replace_with_retry(temp_path, self.claims_path)
             self._write_index(ordered)
         finally:
             if temp_path.exists():
@@ -125,7 +144,7 @@ class ExtractionStore:
         temp_path = Path(temp_name)
         try:
             temp_path.write_text(json.dumps(index, indent=2, sort_keys=True), encoding="utf-8")
-            os.replace(temp_path, self.index_path)
+            _replace_with_retry(temp_path, self.index_path)
         finally:
             if temp_path.exists():
                 temp_path.unlink()

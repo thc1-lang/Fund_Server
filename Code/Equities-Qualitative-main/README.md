@@ -48,6 +48,12 @@ python -m qualitative_ir_downloader.main --worksheet "Safe Secondary Summary"
 # Current short selections (an empty result is valid when no shorts qualify)
 python -m qualitative_ir_downloader.main --worksheet "Short Secondary Summary" --list-only
 
+# Full qualitative pipeline for every unique ticker in all four secondary summaries
+python -m pipeline_runner.main --from-spreadsheet --as-of-date 2026-10-04 --mode fresh
+
+# Limit a full qualitative run to selected secondary-summary tabs
+python -m pipeline_runner.main --from-spreadsheet --worksheet "Safe Secondary Summary" --worksheet "Short Secondary Summary" --as-of-date 2026-10-04 --mode fresh
+
 # Resume the universe at a ticker, inclusively
 python -m qualitative_ir_downloader.main --start-ticker EXEL
 
@@ -63,6 +69,8 @@ The application always processes worksheets in this order:
 4. Short Secondary Summary
 
 Within each worksheet, column B is the ticker and C is the company, starting at row 4. Blank rows are ignored; incomplete pairs are logged with the original row number. Companies are never processed concurrently. Repeated tickers on different rows are separate processing units with their own worksheet provenance.
+
+`pipeline_runner.main --from-spreadsheet` uses the same four worksheets to run the full qualitative pipeline. It keeps the worksheet order, runs each unique ticker once, and records every matching worksheet row in the batch manifest. The final qualitative report for each ticker is stored separately under `C:\Fund_Server\Data\Qual_Data\<TICKER>\Qualitative_Analysis`; the run manifest sits beside it in `11_Run_Summaries\Pipeline`.
 
 `--ticker` is case-insensitive and selects every matching row within the selected worksheet(s). `--start-ticker` starts at the first matching row. These two options are mutually exclusive. `--limit` is applied after filtering. A missing requested ticker is an error rather than silently processing something else.
 

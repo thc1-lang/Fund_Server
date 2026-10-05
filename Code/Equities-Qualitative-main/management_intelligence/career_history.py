@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html as html_lib
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -517,11 +518,19 @@ def parse_proxy_people(html: str | bytes, filing: SECFiling, company_name: str) 
             and re.search(r"\bposition\b|director since", header_text)
             or bool(re.search(r"\|\s*directors?\s*$", header_text))
             or bool(re.search(r"\bname\b.*\bdirector\s+since\b", header_text))
+            # Some SEC-rendered proxies put each nominee in its own compact
+            # table.  Those tables have no conventional header row, but do
+            # explicitly state the nominee's age and director-since year.
+            or bool(re.search(r"\bage:\s*\d+.*\bdirector\s+since:\s*(?:19|20)\d{2}\b", table_text, re.I))
         )
         executive_context = bool(
             re.search(r"(?:^|\|\s*)name\b", header_text)
             and re.search(r"\bposition(?:\(s\))?\b", header_text)
             and not re.search(r"salary|compensation|award|stock|fiscal year|grant date", header_text)
+            # SEC proxies frequently label the officer roster "NEO / Title"
+            # rather than "Name / Position".  It is an explicit roster and
+            # should receive the same factual extraction treatment.
+            or bool(re.search(r"\b(?:neo|named\s+executive\s+officers?)\b\s+(?:name\s+and\s+)?title\b", table_text, re.I))
         )
         if not board_context and not executive_context:
             continue
@@ -529,7 +538,19 @@ def parse_proxy_people(html: str | bytes, filing: SECFiling, company_name: str) 
             cells = [_clean(cell.get_text(" ", strip=True)) for cell in row.find_all(["td", "th"])]
             cells = [cell for cell in cells if cell]
             if len(cells) < 2:
-                continue
+                # Compact SEC nominee layouts can encode the entire roster
+                # item in one cell ("Name Age: 55 Director Since: 2020").
+                # It still contains an explicit director assertion, so
+                # normalize it into the ordinary row shape.
+                compact = cells[0] if cells else ""
+                match = re.match(
+                    r"(?P<name>.+?)\s+Age:\s*\d+\s+Director\s+Since:\s*(?P<year>(?:19|20)\d{2})\b",
+                    compact,
+                    re.I,
+                ) if board_context else None
+                if not match:
+                    continue
+                cells = [_clean(match.group("name")), "director", match.group("year")]
             name = re.sub(r"\s*\([^)]*\)", "", cells[0]).strip(" ,")
             if not _looks_like_name(name):
                 continue
@@ -616,6 +637,46 @@ def parse_proxy_people(html: str | bytes, filing: SECFiling, company_name: str) 
                     evidence_text=evidence,
                     source_ids=[source.source_id],
                 ))
+    # SEC's rendered proxies often lay out a director roster as a grid of
+    # single-cell cards ("Name Age: 55 Director Since: 2020").  It is
+    # authoritative roster evidence but does not fit the row/column layout
+    # above, so normalize just those explicit cards into a conventional table
+    # and reuse the same conservative structured parser.
+    if not result.boards:
+        compact_directors: list[tuple[str, str]] = []
+        for table in soup.find_all("table"):
+            table_text = _clean(table.get_text(" ", strip=True))
+            for match in re.finditer(
+                r"(?P<name>[A-Z][A-Za-z.'\u2019\u2013-]*(?:\s+(?:[A-Z]\.|[A-Z][A-Za-z.'\u2019\u2013-]*)){1,5})\s+Age:\s*\d+\s+Director\s+Since:\s*(?P<year>(?:19|20)\d{2})\b",
+                table_text,
+            ):
+                name = _clean(match.group("name")).strip(" ,")
+                if _looks_like_name(name):
+                    compact_directors.append((name, match.group("year")))
+        compact_directors = list(dict.fromkeys(compact_directors))
+        if compact_directors:
+            rows = "".join(
+                f"<tr><td>{html_lib.escape(name)}</td><td>director</td><td>{year}</td></tr>"
+                for name, year in compact_directors
+            )
+            normalized_roster = (
+                "<table><tr><th>Name</th><th>Position</th><th>Director Since</th></tr>"
+                f"{rows}</table>"
+            )
+            fallback = parse_proxy_people(normalized_roster, filing, company_name)
+            for person in fallback.people:
+                key = person.normalized_name
+                existing = by_key.get(key)
+                if existing is None:
+                    by_key[key] = person
+                    continue
+                existing.current_roles = sorted(set(existing.current_roles + person.current_roles))
+                existing.role_categories = sorted(set(existing.role_categories + person.role_categories))
+                existing.role_start_dates.update(person.role_start_dates)
+                existing.current_since = existing.current_since or person.current_since
+            result.roles.extend(fallback.roles)
+            result.boards.extend(fallback.boards)
+
     # PDF extraction preserves the explicit roster text but removes HTML table
     # structure.  Use the constrained text adapter only when no structured
     # tables produced a person; HTML proxy behavior remains unchanged.

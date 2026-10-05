@@ -26,9 +26,12 @@ class Config:
     request_delay: float = REQUEST_DELAY_SECONDS
     navigation_timeout_ms: int = NAVIGATION_TIMEOUT_MS
     retries: int = MAX_RETRIES
-    max_archive_pages: int = 250
-    max_links_per_company: int = 10000
-    max_interactions: int = 500
+    # Production defaults keep a batch moving when an archive is slow or has
+    # effectively unbounded pagination.  One well-formed archive page usually
+    # exposes far more material than is useful to the qualitative report.
+    max_archive_pages: int = 10
+    max_links_per_company: int = 500
+    max_interactions: int = 50
     max_pdf_bytes: int = 150 * 1024 * 1024
     max_discovery_candidates: int = 15
     max_section_pages: int = 20
