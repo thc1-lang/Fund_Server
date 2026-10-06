@@ -84,10 +84,49 @@ function Get-StagedPaths {
     return @($names -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
+function Test-SafeRootBackupFileName {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    if ($Name -in @('.gitignore', '.gitattributes', '.editorconfig', 'README', 'LICENSE', 'NOTICE')) {
+        return $true
+    }
+
+    return ([System.IO.Path]::GetExtension($Name).ToLowerInvariant() -in @(
+        '.md', '.txt', '.json', '.yml', '.yaml', '.ini', '.cfg', '.ps1', '.cmd', '.bat'
+    ))
+}
+
+function Test-EligibleBackupPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $normalizedPath = $Path -replace '\\', '/'
+    if ($normalizedPath -match '^(Code|Scripts)/') { return $true }
+    if ($normalizedPath -notmatch '/') { return (Test-SafeRootBackupFileName -Name $normalizedPath) }
+    return $false
+}
+
+function Get-BackupStageTargets {
+    $targets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    [void]$targets.Add('Code')
+    [void]$targets.Add('Scripts')
+
+    $rootNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    Get-ChildItem -LiteralPath $RepoRoot -Force -File | ForEach-Object { [void]$rootNames.Add($_.Name) }
+    $headRootNames = Get-GitText -Arguments @('ls-tree', '--name-only', 'HEAD') -Operation 'Reading root backup scope'
+    if (-not [string]::IsNullOrWhiteSpace($headRootNames)) {
+        $headRootNames -split "`r?`n" | ForEach-Object { [void]$rootNames.Add($_) }
+    }
+    foreach ($name in $rootNames) {
+        if (Test-SafeRootBackupFileName -Name $name) { [void]$targets.Add($name) }
+    }
+    return @($targets)
+}
+
 function Assert-SafeStaging {
     $allStagedPaths = @(Get-StagedPaths)
     $protectedPaths = [System.Collections.Generic.List[string]]::new()
     $credentialPaths = [System.Collections.Generic.List[string]]::new()
+    $unexpectedPaths = [System.Collections.Generic.List[string]]::new()
 
     foreach ($path in $allStagedPaths) {
         $normalizedPath = $path -replace '\\', '/'
@@ -99,11 +138,14 @@ function Assert-SafeStaging {
         if ($normalizedPath -match '(^|/)(\.env(?:\.|$)|google_credentials\.json$|service_account\.json$|[^/]*credentials[^/]*\.json$|[^/]*\.pem$|[^/]*\.key$|id_rsa$|id_ed25519$|secrets(/|$)|credentials(/|$))') {
             $credentialPaths.Add($normalizedPath)
         }
+        if (-not (Test-EligibleBackupPath -Path $normalizedPath)) {
+            $unexpectedPaths.Add($normalizedPath)
+        }
     }
 
-    if ($protectedPaths.Count -gt 0 -or $credentialPaths.Count -gt 0) {
-        Write-BackupLog 'STOPPED: protected or credential-named files are staged; no commit was created.'
-        throw 'Protected or credential-named files are staged. Remove them from the index and review manually.'
+    if ($protectedPaths.Count -gt 0 -or $credentialPaths.Count -gt 0 -or $unexpectedPaths.Count -gt 0) {
+        Write-BackupLog 'STOPPED: protected, credential-named, or out-of-scope files are staged; no commit was created.'
+        throw 'Protected, credential-named, or out-of-scope files are staged. Remove them from the index and review manually.'
     }
 
     # Only additions/modifications/renames/copies have an index blob to inspect.
@@ -187,8 +229,10 @@ try {
     Write-BackupLog 'Remote fetch completed.'
     $relationship = Assert-RemoteCanBePushed
 
-    # Respect .gitignore, including /Data/, and stage normal tracked/untracked code changes.
-    [void](Invoke-Git -Arguments @('add', '-A', '--', '.') -Operation 'Staging eligible changes')
+    # Stage only Code/, Scripts/, and safe root configuration/documentation files.
+    # .gitignore still provides a second exclusion layer for generated/runtime files.
+    $stageTargets = @(Get-BackupStageTargets)
+    [void](Invoke-Git -Arguments (@('add', '-A', '--') + $stageTargets) -Operation 'Staging eligible changes')
     $stagedCount = Assert-SafeStaging
 
     & git diff --cached --quiet
