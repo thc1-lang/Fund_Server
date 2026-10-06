@@ -25,6 +25,9 @@ work/
 *.log
 *.tmp
 *.cache
+*.bak
+*.swp
+*.swo
 
 # Server folders not suitable for GitHub
 /Logs/
