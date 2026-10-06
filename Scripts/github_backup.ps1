@@ -19,12 +19,53 @@ $RepoRoot = 'C:\Fund_Server'
 $LogPath = Join-Path $RepoRoot 'Logs\github_backup.log'
 $ExpectedBranch = 'main'
 $MaximumStagedFileBytes = 100MB # GitHub rejects files at or above 100 MiB.
+$TelegramPython = 'C:\Users\thc1\AppData\Local\Python\pythoncore-3.14-64\python.exe'
+$TelegramNotifier = Join-Path $RepoRoot 'Scripts\send_backup_telegram.py'
 
 function Write-BackupLog {
     param([Parameter(Mandatory = $true)][string]$Message)
 
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     Add-Content -LiteralPath $LogPath -Value "$timestamp | $Message" -Encoding UTF8
+}
+
+function Send-BackupTelegram {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('success', 'failure')][string]$Status,
+        [string]$CommitHash = ''
+    )
+
+    # Reuse the existing macro pipeline notifier. It reads Telegram credentials
+    # from the Windows user environment/registry and never exposes them in Git.
+    if (-not (Test-Path -LiteralPath $TelegramPython -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $TelegramNotifier -PathType Leaf)) {
+        Write-BackupLog 'Telegram notification skipped: notifier runtime is unavailable.'
+        return
+    }
+
+    $arguments = @('-X', 'utf8', '-u', $TelegramNotifier, '--status', $Status)
+    if ($CommitHash) { $arguments += @('--commit', $CommitHash) }
+    try {
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $TelegramPython @arguments 2>$null | Out-Null
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        if ($exitCode -eq 0) {
+            Write-BackupLog "Telegram $Status notification requested."
+        }
+        else {
+            Write-BackupLog "Telegram $Status notification could not be requested (exit code $exitCode)."
+        }
+    }
+    catch {
+        # Telegram must never change the backup result or reveal transport details.
+        try { Write-BackupLog "Telegram $Status notification could not be requested." } catch { }
+    }
 }
 
 function Invoke-Git {
@@ -240,6 +281,7 @@ try {
     if ($diffExitCode -eq 0) {
         Write-BackupLog 'No changes detected.'
         if ($relationship.Local -eq $relationship.Remote) {
+            Send-BackupTelegram -Status success
             exit 0
         }
         Write-BackupLog 'Local main is ahead of origin/main; pushing existing local commit(s).'
@@ -270,9 +312,11 @@ try {
     }
 
     Write-BackupLog "Backup completed successfully; origin/main verified at $finalLocal."
+    Send-BackupTelegram -Status success -CommitHash $finalLocal
     exit 0
 }
 catch {
     try { Write-BackupLog "ERROR: $($_.Exception.Message)" } catch { }
+    Send-BackupTelegram -Status failure
     exit 1
 }

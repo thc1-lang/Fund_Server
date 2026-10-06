@@ -125,6 +125,37 @@ def test_cot_command_rejects_duplicate_run(controller, monkeypatch):
     assert not launches
 
 
+@pytest.mark.parametrize("command", ["/backup", "/fund_backup", "fund-server-backup"])
+def test_backup_commands_start_the_existing_backup_task(controller, monkeypatch, command):
+    handler, replies, launches = controller
+    backup_launches = []
+    monkeypatch.setattr(control, "backup_busy", lambda: False)
+    monkeypatch.setattr(control, "start_backup", lambda: backup_launches.append(True))
+    handler.handle(update(command))
+    assert backup_launches == [True]
+    assert not replies and not launches
+
+
+def test_backup_command_rejects_duplicate_run(controller, monkeypatch):
+    handler, replies, launches = controller
+    monkeypatch.setattr(control, "backup_busy", lambda: True)
+    monkeypatch.setattr(
+        control, "start_backup", lambda: pytest.fail("duplicate backup run launched")
+    )
+    handler.handle(update("/backup"))
+    assert "already running" in replies[0].lower()
+    assert not launches
+
+
+def test_start_backup_uses_the_existing_scheduled_task(monkeypatch):
+    calls = []
+    monkeypatch.setattr(control, "powershell", lambda script: calls.append(script))
+    control.start_backup()
+    assert calls == [
+        "Start-ScheduledTask -TaskName 'Fund Server GitHub Backup'"
+    ]
+
+
 @pytest.mark.parametrize("user", [123, 456])
 def test_both_group_users_can_request_status(controller, user):
     handler, replies, launches = controller

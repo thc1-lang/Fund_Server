@@ -18,6 +18,7 @@ SERVER_ROOT = ROOT.parents[1]
 TASK = "US complete pipeline"
 LAUNCHER = SERVER_ROOT / "Scripts" / "run_us_pipeline.bat"
 _child = None
+BACKUP_TASK = "Fund Server GitHub Backup"
 COT_TASK = "US COT report"
 COT_ROOT = SERVER_ROOT / "Code" / "us_cot_import"
 COT_WORK = COT_ROOT / "work"
@@ -45,6 +46,7 @@ HELP = (
     + "\npythonstopall — stop ALL Python processes (including this bot; requires administrator listener)."
     + "\nShortcuts: /run /status /logs /stop /help."
     + "\nCOT: /us_cot_import (or /cot) runs the COT import; /us_cot_status (or /cot_status) checks it."
+    + "\n/backup starts the safe Fund Server GitHub backup; this chat receives only its completion or failure notice."
     + "\n/logs toggles a live log view every 30 seconds with no time limit."
     + "\nRuns update Google Sheets. Stops do not roll back partial writes. Daily schedule stays enabled."
 )
@@ -78,6 +80,10 @@ MENU = [
     {
         "command": "us_cot_status",
         "description": "Show COT import status",
+    },
+    {
+        "command": "backup",
+        "description": "Back up Fund Server safely to GitHub",
     },
     {
         "command": "pythonstopall",
@@ -134,6 +140,21 @@ def task_state():
 
 def cot_task_state():
     return powershell(f"(Get-ScheduledTask -TaskName '{COT_TASK}').State.ToString()")
+
+
+def backup_task_state():
+    return powershell(
+        f"(Get-ScheduledTask -TaskName '{BACKUP_TASK}').State.ToString()"
+    )
+
+
+def backup_busy():
+    return backup_task_state() in ("Running", "Queued")
+
+
+def start_backup():
+    """Start the same scheduled task used for the daily safe GitHub backup."""
+    powershell(f"Start-ScheduledTask -TaskName '{BACKUP_TASK}'")
 
 
 def pipeline_locked():
@@ -388,6 +409,7 @@ class Controller:
             self.offset = int(json.loads(self.offset_path.read_text())["offset"])
         self.last_launch = 0.0
         self.last_cot_launch = 0.0
+        self.last_backup_launch = 0.0
         self.log_watch = None
 
     def checkpoint(self, offset):
@@ -433,6 +455,9 @@ class Controller:
             "stop",
             "help",
             "pythonstopall",
+            "backup",
+            "fund-backup",
+            "fund-server-backup",
         ):
             return
         if time.time() - message.get("date", 0) > 120:
@@ -465,6 +490,13 @@ class Controller:
                     return  # The COT runner sends the start and completion reports.
             elif command in ("cot-status", "us-cot-status"):
                 reply = cot_status()
+            elif command in ("backup", "fund-backup", "fund-server-backup"):
+                if time.monotonic() - self.last_backup_launch < 30 or backup_busy():
+                    reply = "Backup is already running or was requested recently. Completion or failure will be reported here."
+                else:
+                    start_backup()
+                    self.last_backup_launch = time.monotonic()
+                    return  # The backup script sends the completion/failure notice.
             elif command == "stop":
                 reply = stop_pipeline()
             elif command == "logs":
@@ -536,6 +568,7 @@ def main():
                 "This bot has a webhook; use a dedicated bot for the pipeline"
             )
         task_state()  # Fail before accepting commands if this account cannot read the task.
+        backup_task_state()
         controller = Controller(chat, users, me["username"])
         if controller.offset is None:
             updates = api(
