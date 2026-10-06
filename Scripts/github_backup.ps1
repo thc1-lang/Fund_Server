@@ -122,23 +122,23 @@ function Assert-SafeStaging {
     )
 
     foreach ($path in $contentPaths) {
-        $blobSizeText = Get-GitText -Arguments @('cat-file', '-s', ":$path") -Operation "Checking staged file size for $path"
+        $blobSizeText = Get-GitText -Arguments @('cat-file', '-s', ":$path") -Operation 'Checking staged file size'
         $blobSize = [Int64]::Parse($blobSizeText)
         if ($blobSize -ge $MaximumStagedFileBytes) {
             Write-BackupLog "STOPPED: staged file exceeds GitHub's 100 MiB limit; no commit was created."
-            throw "Staged file '$path' is $blobSize bytes, which is at or above GitHub's 100 MiB limit."
+            throw "A staged file is at or above GitHub's 100 MiB limit."
         }
 
         # Scan the staged version, never the worktree version, and never log content.
         $blobContent = (& git show --no-textconv ":$path" 2>$null) -join "`n"
         if ($LASTEXITCODE -ne 0) {
             Write-BackupLog "ERROR: Unable to inspect staged file content (git exit code $LASTEXITCODE)."
-            throw "Unable to inspect staged file content for '$path' (git exit code $LASTEXITCODE)."
+            throw "Unable to inspect staged file content (git exit code $LASTEXITCODE)."
         }
         foreach ($pattern in $secretPatterns) {
             if ($blobContent -match $pattern) {
                 Write-BackupLog 'STOPPED: an obvious credential or private key pattern was found in staged content; no commit was created.'
-                throw "An obvious credential or private key pattern was found in staged file '$path'."
+                throw 'An obvious credential or private key pattern was found in staged content.'
             }
         }
     }
