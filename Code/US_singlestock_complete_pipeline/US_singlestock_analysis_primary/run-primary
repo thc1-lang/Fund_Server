@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+export ALLOW_CREATE_INDUSTRY_TABS=true
+exec .venv/bin/python main.py --live --import-zacks --output-dir outputs/zacks_run "$@"

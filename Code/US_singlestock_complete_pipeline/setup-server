@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Create the portable runtime required by run-complete-pipeline.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOOTSTRAP_PYTHON="${BOOTSTRAP_PYTHON:-python3}"
+
+if ! command -v "$BOOTSTRAP_PYTHON" >/dev/null 2>&1; then
+    printf 'Python command not found: %s\nSet BOOTSTRAP_PYTHON to Python 3.\n' "$BOOTSTRAP_PYTHON" >&2
+    exit 1
+fi
+
+cd "$ROOT_DIR"
+"$BOOTSTRAP_PYTHON" -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m playwright install chromium
+
+printf 'Server runtime ready: %s/.venv\n' "$ROOT_DIR"

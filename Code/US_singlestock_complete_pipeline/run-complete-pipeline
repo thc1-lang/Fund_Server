@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# Run the two workbook pipelines in their required dependency order.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON_BIN="${PIPELINE_PYTHON:-${ROOT_DIR}/.venv/bin/python}"
+PRIMARY_OUTPUT_DIR=""
+SECONDARY_OUTPUT_DIR=""
+SUMMARY_OUTPUT_ROOT=""
+ZACKS_MARKET_CAP_MIN=3000
+ZACKS_HEADED=false
+SECONDARY_CREDENTIALS_FILE=""
+SEC_USER_AGENT=""
+SEC_CACHE_DIR=""
+SKIP_HUMAN_SHEET=false
+
+usage() {
+    cat <<'USAGE'
+Usage: ./run-complete-pipeline [options]
+
+Runs, in order:
+  1. Primary Zacks importer and Primary live analysis/publication
+  2. Secondary SEC importer (from the refreshed Primary selections)
+  3. Secondary live analysis/publication
+  4. AI evidence-package and human-summary publication
+
+Options:
+  --credentials-file PATH        Service-account JSON for both projects.
+  --primary-output-dir PATH      Where Primary local audit outputs are written.
+  --secondary-output-dir PATH    Where Secondary local audit outputs are written.
+  --summary-output-root PATH     Where the per-ticker AI evidence package is written.
+  --skip-human-sheet             Build AI evidence only; do not update the human summary Sheet.
+  --zacks-market-cap-min NUMBER  Zacks minimum market cap in millions (default: 3000).
+  --zacks-headed                 Show Chromium for a user-completed Zacks login/check.
+  --sec-user-agent VALUE         SEC-compliant user-agent string.
+  --sec-cache-dir PATH           Reusable SEC CompanyFacts cache location.
+  -h, --help                     Show this help.
+
+Set PIPELINE_PYTHON to use a Python executable other than ./.venv/bin/python.
+Credential resolution, in priority order: --credentials-file,
+GOOGLE_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS,
+./google_credentials.json, then ./service_account.json.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --credentials-file)
+            SECONDARY_CREDENTIALS_FILE="$2"
+            export GOOGLE_CREDENTIALS_FILE="$2"
+            shift 2
+            ;;
+        --primary-output-dir)
+            PRIMARY_OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --secondary-output-dir)
+            SECONDARY_OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --summary-output-root)
+            SUMMARY_OUTPUT_ROOT="$2"
+            shift 2
+            ;;
+        --skip-human-sheet)
+            SKIP_HUMAN_SHEET=true
+            shift
+            ;;
+        --zacks-market-cap-min)
+            ZACKS_MARKET_CAP_MIN="$2"
+            shift 2
+            ;;
+        --zacks-headed)
+            ZACKS_HEADED=true
+            shift
+            ;;
+        --sec-user-agent)
+            SEC_USER_AGENT="$2"
+            shift 2
+            ;;
+        --sec-cache-dir)
+            SEC_CACHE_DIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            printf 'Unknown option: %s\n\n' "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [[ ! -x "$PYTHON_BIN" ]]; then
+    printf 'Python executable not found: %s\nRun ./setup-server first, or set PIPELINE_PYTHON.\n' "$PYTHON_BIN" >&2
+    exit 1
+fi
+
+if [[ -z "$SECONDARY_CREDENTIALS_FILE" ]]; then
+    for credential_candidate in "${GOOGLE_CREDENTIALS_FILE:-}" "${GOOGLE_APPLICATION_CREDENTIALS:-}" \
+        "$ROOT_DIR/google_credentials.json" "$ROOT_DIR/service_account.json"; do
+        if [[ -n "$credential_candidate" && -f "$credential_candidate" ]]; then
+            SECONDARY_CREDENTIALS_FILE="$credential_candidate"
+            break
+        fi
+    done
+fi
+
+if [[ -z "$SECONDARY_CREDENTIALS_FILE" || ! -f "$SECONDARY_CREDENTIALS_FILE" ]]; then
+    printf 'Google credentials not found. Add google_credentials.json to this folder, set GOOGLE_CREDENTIALS_FILE, or pass --credentials-file.\n' >&2
+    exit 1
+fi
+export GOOGLE_CREDENTIALS_FILE="$SECONDARY_CREDENTIALS_FILE"
+
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+PRIMARY_OUTPUT_DIR="${PRIMARY_OUTPUT_DIR:-${ROOT_DIR}/outputs/${RUN_ID}/primary}"
+SECONDARY_OUTPUT_DIR="${SECONDARY_OUTPUT_DIR:-${ROOT_DIR}/outputs/${RUN_ID}/secondary}"
+SUMMARY_OUTPUT_ROOT="${SUMMARY_OUTPUT_ROOT:-${ROOT_DIR}/outputs/${RUN_ID}/summary}"
+
+# This retains the existing run-primary behaviour: a new live industry tab may
+# be created only when the latest Zacks universe contains a new industry.
+export ALLOW_CREATE_INDUSTRY_TABS=true
+
+primary_args=(
+    "$PYTHON_BIN" main.py --live --import-zacks
+    --zacks-market-cap-min "$ZACKS_MARKET_CAP_MIN"
+    --output-dir "$PRIMARY_OUTPUT_DIR"
+)
+if [[ "$ZACKS_HEADED" == true ]]; then
+    primary_args+=(--zacks-headed)
+fi
+
+secondary_args=(
+    "$PYTHON_BIN" main.py --import-sec-data --live
+    --output-dir "$SECONDARY_OUTPUT_DIR"
+)
+if [[ -n "$SECONDARY_CREDENTIALS_FILE" ]]; then
+    secondary_args+=(--credentials-file "$SECONDARY_CREDENTIALS_FILE")
+fi
+if [[ -n "$SEC_USER_AGENT" ]]; then
+    secondary_args+=(--sec-user-agent "$SEC_USER_AGENT")
+fi
+if [[ -n "$SEC_CACHE_DIR" ]]; then
+    secondary_args+=(--sec-cache-dir "$SEC_CACHE_DIR")
+fi
+
+summary_args=(
+    "$PYTHON_BIN" main.py --output-root "$SUMMARY_OUTPUT_ROOT"
+)
+if [[ -n "$SECONDARY_CREDENTIALS_FILE" ]]; then
+    summary_args+=(--credentials-file "$SECONDARY_CREDENTIALS_FILE")
+fi
+if [[ "$SKIP_HUMAN_SHEET" == true ]]; then
+    summary_args+=(--skip-human-sheet)
+fi
+
+printf '[1/3] Primary: Zacks import, analysis, and live publication\n' >&2
+(
+    cd "$ROOT_DIR/US_singlestock_analysis_primary"
+    "${primary_args[@]}"
+)
+
+printf '[2/3] Secondary: SEC import and live analysis/publication\n' >&2
+(
+    cd "$ROOT_DIR/US_singlestock_analysis_secondary"
+    "${secondary_args[@]}"
+)
+
+printf '[3/3] Summary: AI evidence package and human summary publication\n' >&2
+(
+    cd "$ROOT_DIR/US_singlestock_analysis_summary"
+    "${summary_args[@]}"
+)
+
+printf 'Complete. Local run artifacts:\n  %s/run_summary.json\n  %s/run_summary.json\n  %s/run_manifest.json\n' \
+    "$PRIMARY_OUTPUT_DIR" "$SECONDARY_OUTPUT_DIR" "$SUMMARY_OUTPUT_ROOT" >&2

@@ -125,6 +125,58 @@ def test_cot_command_rejects_duplicate_run(controller, monkeypatch):
     assert not launches
 
 
+@pytest.mark.parametrize(
+    ("command", "stage"),
+    [
+        ("/us_stock_run", "all"),
+        ("/us-stock-primary", "primary"),
+        ("/us_single_stock_secondary", "secondary"),
+        ("us-stock-summary", "summary"),
+    ],
+)
+def test_single_stock_commands_launch_only_fixed_stages(controller, monkeypatch, command, stage):
+    handler, replies, launches = controller
+    single_stock_launches = []
+    monkeypatch.setattr(control, "single_stock_busy", lambda: False)
+    monkeypatch.setattr(
+        control, "start_single_stock_pipeline",
+        lambda requested: single_stock_launches.append(requested),
+    )
+    handler.handle(update(command))
+    assert single_stock_launches == [stage]
+    assert not replies and not launches
+
+
+def test_single_stock_status_and_stop_do_not_launch(controller, monkeypatch):
+    handler, replies, launches = controller
+    monkeypatch.setattr(control, "single_stock_status", lambda: "Single-stock pipeline: idle.")
+    monkeypatch.setattr(control, "stop_single_stock_pipeline", lambda: "Stop requested.")
+    handler.handle(update("/us_stock_status"))
+    handler.handle(update("/us_stock_stop", uid=2))
+    assert replies == ["Single-stock pipeline: idle.", "Stop requested."]
+    assert not launches
+
+
+def test_single_stock_dispatch_uses_only_fixed_launcher(monkeypatch):
+    import types
+
+    calls = []
+    monkeypatch.setattr(control, "credential", lambda key: "configured")
+    monkeypatch.setattr(
+        control.subprocess,
+        "Popen",
+        lambda command, **kw: calls.append((command, kw))
+        or types.SimpleNamespace(poll=lambda: 0),
+    )
+    monkeypatch.setattr(control.Path, "is_file", lambda path: True)
+    control.start_single_stock_pipeline("summary")
+    assert calls[0][0] == [
+        "cmd.exe", "/d", "/c", str(control.SINGLE_STOCK_LAUNCHER), "--stage", "summary",
+    ]
+    with pytest.raises(ValueError):
+        control.start_single_stock_pipeline("summary & calc.exe")
+
+
 @pytest.mark.parametrize("command", ["/backup", "/fund_backup", "fund-server-backup"])
 def test_backup_commands_start_the_existing_backup_task(controller, monkeypatch, command):
     handler, replies, launches = controller

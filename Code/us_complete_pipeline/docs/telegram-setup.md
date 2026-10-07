@@ -102,6 +102,13 @@ For the longest name the menu uses `/us_macro_correlation_momentum`; the full
 | `us-macroanalysis-momentum` | Run momentum only |
 | `us-macroanalysis-spread-momentum` | Run spread momentum only |
 | `us-macroanalysis-correlation-momentum` | Run correlation momentum only |
+| `us-stock-run` | Run the complete US single-stock Primary → Secondary → Summary pipeline |
+| `us-stock-primary` | Run the Primary Zacks screen and publication only |
+| `us-stock-secondary` | Run the Secondary SEC screen and publication only |
+| `us-stock-summary` | Rebuild the single-stock evidence package and human summary only |
+| `us-stock-status` | Show single-stock state and latest recorded result |
+| `us-stock-logs` | Watch the separate single-stock log; repeat to stop watching |
+| `us-stock-stop` | Stop the single-stock pipeline only |
 | `pythonstopall` | Force-stop all Python processes on the server, including the bot |
 
 Shortcuts `/run`, `/status`, `/logs`, `/stop`, and `/help` remain available.
@@ -125,6 +132,15 @@ project from other Python jobs. The supervisor starts a new bot after about 10
 seconds plus connection time; stopped calculation jobs are not restarted. This
 command does not disable the next daily scheduled run. Global force-stop tests
 use mocks; the live server-wide kill was not executed during installation.
+
+## Single-stock notification policy
+
+The single-stock runner sends a start and a final result or failure notification
+to this same protected group. It records the published shortlist memberships
+locally and names tickers and categories only when a membership has changed.
+Unchanged shortlists receive a concise completion message. Its run lock,
+scheduled task, stop request, status record, and live log are separate from the
+macro pipeline, so commands always affect the intended job.
 
 ## Example notification layout (illustrative values)
 

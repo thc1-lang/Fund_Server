@@ -1,0 +1,4 @@
+# The two projects share one virtual environment in this portable package.
+-r US_singlestock_analysis_primary/requirements.txt
+-r US_singlestock_analysis_secondary/requirements.txt
+-r US_singlestock_analysis_summary/requirements.txt

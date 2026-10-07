@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated analysis artifacts
+outputs/
+
+# Google service-account credentials and local environment overrides
+google_credentials.json
+service_account.json
+*service-account*.json
+.env
+.env.*
+
+# macOS / editor metadata
+.DS_Store
+.idea/
+.vscode/

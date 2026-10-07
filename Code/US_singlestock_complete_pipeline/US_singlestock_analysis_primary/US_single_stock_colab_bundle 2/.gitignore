@@ -1,0 +1,7 @@
+service_account.json
+google_credentials.json
+*.xlsx
+outputs/
+__pycache__/
+.pytest_cache/
+*.pyc

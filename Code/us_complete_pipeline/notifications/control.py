@@ -25,6 +25,18 @@ COT_WORK = COT_ROOT / "work"
 COT_LAUNCHER = SERVER_ROOT / "Scripts" / "run_us_COT.cmd"
 COT_LOG_PATH = SERVER_ROOT / "Logs" / "us_COT.log"
 _cot_child = None
+SINGLE_STOCK_ROOT = SERVER_ROOT / "Code" / "US_singlestock_complete_pipeline"
+SINGLE_STOCK_WORK = SINGLE_STOCK_ROOT / "work"
+SINGLE_STOCK_TASK = "US single-stock pipeline"
+SINGLE_STOCK_LAUNCHER = SERVER_ROOT / "Scripts" / "run_us_single_stock_pipeline.bat"
+SINGLE_STOCK_LOG_PATH = SERVER_ROOT / "Logs" / "us_single_stock_pipeline.log"
+_single_stock_child = None
+SINGLE_STOCK_COMMANDS = {
+    "us-stock-run": "all",
+    "us-stock-primary": "primary",
+    "us-stock-secondary": "secondary",
+    "us-stock-summary": "summary",
+}
 STAGE_COMMANDS = {
     "run": "all",
     "indicators": "importer",
@@ -46,6 +58,7 @@ HELP = (
     + "\npythonstopall — stop ALL Python processes (including this bot; requires administrator listener)."
     + "\nShortcuts: /run /status /logs /stop /help."
     + "\nCOT: /us_cot_import (or /cot) runs the COT import; /us_cot_status (or /cot_status) checks it."
+    + "\nSingle stock: /us_stock_run, /us_stock_primary, /us_stock_secondary, /us_stock_summary; status/logs/stop use the same us_stock prefix."
     + "\n/backup starts the safe Fund Server GitHub backup; this chat receives only its completion or failure notice."
     + "\n/logs toggles a live log view every 30 seconds with no time limit."
     + "\nRuns update Google Sheets. Stops do not roll back partial writes. Daily schedule stays enabled."
@@ -71,6 +84,20 @@ MENU = [
         ("momentum", "Run momentum only"),
         ("spread-momentum", "Run spread momentum only"),
         ("correlation-momentum", "Run correlation momentum only"),
+    ]
+] + [
+    {
+        "command": command.replace("-", "_"),
+        "description": description,
+    }
+    for command, description in [
+        ("us-stock-run", "Run the full single-stock pipeline"),
+        ("us-stock-status", "Show single-stock pipeline status"),
+        ("us-stock-logs", "Watch the single-stock log"),
+        ("us-stock-stop", "Stop the single-stock pipeline"),
+        ("us-stock-primary", "Run Primary screen only"),
+        ("us-stock-secondary", "Run Secondary screen only"),
+        ("us-stock-summary", "Run evidence summary only"),
     ]
 ] + [
     {
@@ -142,6 +169,15 @@ def cot_task_state():
     return powershell(f"(Get-ScheduledTask -TaskName '{COT_TASK}').State.ToString()")
 
 
+def single_stock_task_state():
+    try:
+        return powershell(
+            f"(Get-ScheduledTask -TaskName '{SINGLE_STOCK_TASK}').State.ToString()"
+        )
+    except RuntimeError:
+        return "Not installed"
+
+
 def backup_task_state():
     return powershell(
         f"(Get-ScheduledTask -TaskName '{BACKUP_TASK}').State.ToString()"
@@ -190,6 +226,24 @@ def cot_busy():
         (_cot_child is not None and _cot_child.poll() is None)
         or cot_task_state() in ("Running", "Queued")
         or cot_locked()
+    )
+
+
+def single_stock_locked():
+    SINGLE_STOCK_WORK.mkdir(parents=True, exist_ok=True)
+    with (SINGLE_STOCK_WORK / "single_stock_pipeline.lock").open("a+") as handle:
+        try:
+            acquire_lock(handle)
+        except OSError:
+            return True
+    return False
+
+
+def single_stock_busy():
+    return (
+        (_single_stock_child is not None and _single_stock_child.poll() is None)
+        or single_stock_task_state() in ("Running", "Queued")
+        or single_stock_locked()
     )
 
 
@@ -243,6 +297,30 @@ def start_cot_import():
     )
 
 
+def start_single_stock_pipeline(stage="all"):
+    """Start a fixed, allow-listed single-stock stage without shell interpolation."""
+    global _single_stock_child
+    if stage not in ("all", "primary", "secondary", "summary"):
+        raise ValueError("Unsupported single-stock stage")
+    if not SINGLE_STOCK_LAUNCHER.is_file():
+        raise RuntimeError("The single-stock pipeline launcher is missing")
+    environment = dict(os.environ)
+    for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+        if not environment.get(key):
+            value = credential(key)
+            if value:
+                environment[key] = value
+    _single_stock_child = subprocess.Popen(
+        ["cmd.exe", "/d", "/c", str(SINGLE_STOCK_LAUNCHER), "--stage", stage],
+        cwd=SINGLE_STOCK_ROOT,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
 def cot_status():
     state = cot_task_state()
     active = (
@@ -264,6 +342,39 @@ def cot_status():
     except OSError:
         lines.append("The COT log is not available yet.")
     lines.append("A running import will send its own completion report.")
+    return "\n".join(lines)
+
+
+def single_stock_status():
+    state = single_stock_task_state()
+    active = (
+        (_single_stock_child is not None and _single_stock_child.poll() is None)
+        or state in ("Running", "Queued")
+        or single_stock_locked()
+    )
+    lines = [f"Single-stock pipeline: {'running' if active else 'idle'} (task: {state})."]
+    candidates = sorted(SINGLE_STOCK_ROOT.glob("outputs/*/summary.json"), reverse=True)
+    if candidates:
+        try:
+            report = json.loads(candidates[0].read_text(encoding="utf-8"))
+            lines.extend(
+                [
+                    f"Latest recorded run: {candidates[0].parent.name}",
+                    f"Recorded status: {report.get('status', 'unknown')}",
+                    f"Scope: {report.get('stage', 'unknown')}",
+                    f"Current/last stage: {report.get('current_stage', 'not recorded')}",
+                    f"Completed stages: {len(report.get('stages', []))}",
+                ]
+            )
+            if "seconds" in report:
+                lines.append(f"Recorded elapsed: {report['seconds']}s")
+            if report.get("error"):
+                lines.append("Error: " + str(report["error"])[-700:])
+        except (OSError, ValueError, TypeError):
+            lines.append("Latest summary is unavailable; inspect the local log.")
+    else:
+        lines.append("No single-stock run summary recorded yet.")
+    lines.append(f"Log: {SINGLE_STOCK_LOG_PATH}")
     return "\n".join(lines)
 
 
@@ -332,6 +443,24 @@ def stop_pipeline():
     return "Stop requested for this pipeline only. Its runner will terminate the current stage and child processes; setup may need to finish first. Partial writes are not rolled back. The daily schedule stays enabled."
 
 
+def stop_single_stock_pipeline():
+    if not single_stock_locked():
+        return "No active single-stock pipeline holds the run lock. If a run is starting, retry shortly."
+    try:
+        active = json.loads(
+            (SINGLE_STOCK_WORK / "active-single-stock-pipeline.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        run_id = active["run_id"]
+        if not re.fullmatch(r"[0-9a-f]{32}", run_id):
+            raise ValueError("Invalid run ID")
+    except (OSError, ValueError, KeyError, TypeError):
+        return "Active single-stock run cannot be identified. No processes were stopped."
+    (SINGLE_STOCK_WORK / f"stop-{run_id}.request").touch()
+    return "Stop requested for the single-stock pipeline only. Its current child process will terminate; partial workbook writes are not rolled back. The weekly schedule stays enabled."
+
+
 def is_admin():
     if sys.platform != "win32":
         return False
@@ -381,6 +510,17 @@ def log_tail():
         return "The server log is not available yet."
 
 
+def single_stock_log_tail():
+    try:
+        with SINGLE_STOCK_LOG_PATH.open("rb") as log:
+            log.seek(0, 2)
+            log.seek(max(0, log.tell() - 6000))
+            text = log.read().decode("utf-8", errors="replace")
+        return safe_log_text(text)[-3000:] or "No log output yet."
+    except OSError:
+        return "The single-stock server log is not available yet."
+
+
 def parse_allowed_user_ids(raw_users):
     """Require explicit, positive Telegram user IDs for group control."""
     users = [value.strip() for value in raw_users.split(",")]
@@ -409,6 +549,7 @@ class Controller:
             self.offset = int(json.loads(self.offset_path.read_text())["offset"])
         self.last_launch = 0.0
         self.last_cot_launch = 0.0
+        self.last_single_stock_launch = 0.0
         self.last_backup_launch = 0.0
         self.log_watch = None
 
@@ -443,6 +584,8 @@ class Controller:
             command = command[len("us-macroanalysis-") :]
         elif command.startswith("us-macro-"):
             command = command[len("us-macro-") :]
+        elif command.startswith("us-single-stock-"):
+            command = "us-stock-" + command[len("us-single-stock-") :]
         if not text.startswith("/") and command not in (
             *STAGE_COMMANDS,
             "cot",
@@ -458,6 +601,10 @@ class Controller:
             "backup",
             "fund-backup",
             "fund-server-backup",
+            *SINGLE_STOCK_COMMANDS,
+            "us-stock-status",
+            "us-stock-logs",
+            "us-stock-stop",
         ):
             return
         if time.time() - message.get("date", 0) > 120:
@@ -481,6 +628,20 @@ class Controller:
                     start_pipeline(STAGE_COMMANDS[command])
                     self.last_launch = time.monotonic()
                     return  # The runner sends the single start notification.
+            elif command in SINGLE_STOCK_COMMANDS:
+                if time.monotonic() - self.last_single_stock_launch < 30 or single_stock_busy():
+                    reply = "Already running or recently requested.\n" + single_stock_status()
+                else:
+                    start_single_stock_pipeline(SINGLE_STOCK_COMMANDS[command])
+                    self.last_single_stock_launch = time.monotonic()
+                    return  # The runner sends the start and completion reports.
+            elif command == "us-stock-status":
+                reply = single_stock_status()
+            elif command == "us-stock-stop":
+                reply = stop_single_stock_pipeline()
+            elif command == "us-stock-logs":
+                self.toggle_logs("single-stock")
+                return
             elif command in ("cot", "cot-import", "us-cot-import"):
                 if time.monotonic() - self.last_cot_launch < 30 or cot_busy():
                     reply = "Already running or recently requested.\n" + cot_status()
@@ -518,20 +679,20 @@ class Controller:
             reply = "Could not complete this command. Check the server listener and Task Scheduler. No extra run was queued; use /status before retrying."
         send_telegram(reply, "Telegram control")
 
-    def toggle_logs(self):
+    def toggle_logs(self, source="macro"):
         if self.log_watch is not None:
             self.log_watch = None
             send_telegram("Live log watching stopped.", "Pipeline logs")
             return
-        text = (
-            "Live pipeline log — updates every 30 seconds with no time limit. Send /logs again to stop.\n\n"
-            + log_tail()
-        )
+        label = "single-stock" if source == "single-stock" else "pipeline"
+        tail = single_stock_log_tail if source == "single-stock" else log_tail
+        text = f"Live {label} log — updates every 30 seconds with no time limit. Send this logs command again to stop.\n\n" + tail()
         sent = api("sendMessage", chat_id=self.chat_id, text=text)
         self.log_watch = {
             "message_id": sent["message_id"],
             "next": time.monotonic() + 30,
             "text": text,
+            "source": source,
         }
 
     def update_logs(self):
@@ -539,8 +700,11 @@ class Controller:
         if watch is None or time.monotonic() < watch["next"]:
             return
         watch["next"] = time.monotonic() + 30
-        header = "Live pipeline log — updates every 30 seconds with no time limit. Send /logs again to stop."
-        text = header + "\n\n" + log_tail()
+        single_stock = watch.get("source") == "single-stock"
+        label = "single-stock" if single_stock else "pipeline"
+        tail = single_stock_log_tail if single_stock else log_tail
+        header = f"Live {label} log — updates every 30 seconds with no time limit. Send this logs command again to stop."
+        text = header + "\n\n" + tail()
         if text != watch["text"]:
             api(
                 "editMessageText",

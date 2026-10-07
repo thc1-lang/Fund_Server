@@ -1,0 +1,11 @@
+.venv/
+outputs/
+US_singlestock_analysis_primary/outputs/
+US_singlestock_analysis_primary/logs/
+US_singlestock_analysis_secondary/outputs/
+US_singlestock_analysis_secondary/sec_companyfacts_cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+google_credentials.json
+service_account.json
