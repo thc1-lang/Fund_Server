@@ -163,6 +163,32 @@ def test_import_preview_does_not_claim_changes(collecting):
     assert changes.events() == []
 
 
+def test_import_backfill_is_reported_as_an_added_value(collecting):
+    from monthly_indicators import print_sync_summary, sync_result_row
+
+    result = sync_result_row(
+        "Central bank liquidity growth",
+        "Central bank liquidity growth",
+        None,
+        2,
+        0,
+        None,
+        source_change_counts={"added": 2, "updated": 0, "removed": 0},
+    )
+    print_sync_summary([result])
+    assert changes.events() == [
+        {
+            "category": "Source data",
+            "name": "Central bank liquidity growth",
+            "added": 2,
+            "updated": 0,
+            "removed": 0,
+            "unknown": False,
+            "note": "",
+        }
+    ]
+
+
 def test_unwritable_journal_does_not_block_calculations(tmp_path, monkeypatch):
     monkeypatch.setenv(
         "US_PIPELINE_CHANGE_REPORT", str(tmp_path / "missing" / "changes.jsonl")

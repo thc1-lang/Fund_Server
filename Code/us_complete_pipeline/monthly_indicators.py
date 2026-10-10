@@ -5727,8 +5727,10 @@ def sync_result_row(
     appended: int,
     latest_after: date | None,
     warning: str = "",
+    *,
+    source_change_counts: dict[str, int] | None = None,
 ) -> dict:
-    return {
+    result = {
         "indicator": indicator,
         "sheet_name": sheet_name,
         "latest_before": latest_before.isoformat() if latest_before else "",
@@ -5738,6 +5740,9 @@ def sync_result_row(
         "no_new_value": "yes" if appended == 0 else "no",
         "warning": warning,
     }
+    if source_change_counts is not None:
+        result["source_change_counts"] = source_change_counts
+    return result
 
 
 def validate_analysis_workbook_topology(
@@ -6646,6 +6651,18 @@ def central_bank_append_rows(
     return latest_before, fills, rows, latest_after
 
 
+def central_bank_source_change_counts(
+    fills: list[tuple[int, int, date, float]], rows: list[list[object]]
+) -> dict[str, int]:
+    """Report blank backfills as additions, never as source-value revisions."""
+    return {
+        "added": len(fills)
+        + sum(value not in (None, "") for row in rows for value in row[1:]),
+        "updated": 0,
+        "removed": 0,
+    }
+
+
 def central_bank_full_table_values(
     values: list[list[object]],
     component_data: dict[str, list[dict]],
@@ -6838,6 +6855,7 @@ def sync_central_bank_liquidity_with_service(
             len(rows),
             latest_after,
             "DRY RUN: would " + "; ".join(pieces) + ".",
+            source_change_counts=central_bank_source_change_counts(fills, rows),
         )
     if fills:
         sheets.values().batchUpdate(
@@ -6868,6 +6886,7 @@ def sync_central_bank_liquidity_with_service(
         len(fills),
         len(rows),
         latest_after,
+        source_change_counts=central_bank_source_change_counts(fills, rows),
     )
 
 
@@ -7004,6 +7023,7 @@ def sync_central_bank_liquidity_direct(
             len(rows),
             latest_after,
             "DRY RUN: would " + "; ".join(pieces) + ".",
+            source_change_counts=central_bank_source_change_counts(fills, rows),
         )
     if fills:
         google_sheets_request(
@@ -7036,6 +7056,7 @@ def sync_central_bank_liquidity_direct(
         len(fills),
         len(rows),
         latest_after,
+        source_change_counts=central_bank_source_change_counts(fills, rows),
     )
 
 
@@ -7048,6 +7069,7 @@ def print_sync_summary(results: list[dict], *, validate_only: bool = False) -> N
             warning = str(item.get("warning", ""))
             if warning.startswith("Rebuilt reconciled A:B history"):
                 continue  # Exact before/after counts were recorded at the write.
+            counts = item.get("source_change_counts", {})
             unknown = bool(
                 warning
                 and not warning.startswith(("No newer source", "No valid source"))
@@ -7055,8 +7077,11 @@ def print_sync_summary(results: list[dict], *, validate_only: bool = False) -> N
             record(
                 "Source data",
                 item["indicator"],
-                added=item.get("appended", 0),
-                updated=0 if unknown else item.get("revised", 0),
+                added=counts.get("added", item.get("appended", 0)),
+                updated=0
+                if unknown
+                else counts.get("updated", item.get("revised", 0)),
+                removed=counts.get("removed", 0),
                 unknown=unknown,
             )
 
@@ -7089,7 +7114,7 @@ def print_sync_summary(results: list[dict], *, validate_only: bool = False) -> N
             "Indicator",
             "Sheet",
             "Latest before",
-            "Updated cells",
+            "Changed cells",
             "Appended",
             "Latest after",
             "No new value",
