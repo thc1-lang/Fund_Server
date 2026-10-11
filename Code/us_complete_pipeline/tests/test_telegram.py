@@ -339,6 +339,36 @@ def test_open_workbook_uses_quota_backoff(monkeypatch):
     assert backoff_calls == [{"operation_name": "open_workbook"}]
 
 
+def test_control_panel_reads_use_quota_backoff(monkeypatch):
+    import us_indicator_analysis as analysis
+
+    calls = []
+
+    class Worksheet:
+        def get(self, control_range):
+            calls.append(("get", control_range))
+            return [["Manufacturing PMI"], [""]]
+
+    class Workbook:
+        def worksheet(self, sheet_name):
+            calls.append(("worksheet", sheet_name))
+            return Worksheet()
+
+    operations = []
+
+    def backoff(fn, **kwargs):
+        operations.append(kwargs["operation_name"])
+        return fn()
+
+    monkeypatch.setattr(analysis, "call_with_backoff", backoff)
+
+    specs = analysis.read_control_panel_indicator_specs(Workbook(), "A3:A", True)
+
+    assert [spec.sheet_name for spec in specs] == ["Manufacturing PMI"]
+    assert calls == [("worksheet", "Control Panel"), ("get", "A3:A")]
+    assert operations == ["control_panel_worksheet", "control_panel_get[A3:A]"]
+
+
 def test_parent_suppresses_child_notifications(alerts, monkeypatch, tmp_path):
     credential = tmp_path / "credentials.json"
     credential.write_text("{}")

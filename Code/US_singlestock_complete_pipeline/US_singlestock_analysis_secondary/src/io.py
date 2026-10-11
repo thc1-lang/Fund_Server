@@ -430,9 +430,17 @@ def preflight_and_read(spreadsheet_id: str, credentials_file: str | None = None)
     if primary_book.title != config.PRIMARY_SHORT_WORKBOOK_TITLE:
         raise ValueError(f"Primary source workbook title mismatch: {primary_book.title!r}")
     try:
-        primary_short_values = primary_book.worksheet(config.PRIMARY_SHORT_TAB).get_all_values()
+        # Reconciliation anchors must use stored values, not formatted display text.
+        # The Short tab rounds prices for presentation while Dataset preserves the
+        # vendor precision, so formatted reads can turn one value into a false
+        # stale-data mismatch (for example, 20.755 displayed as 20.76).
+        primary_short_values = primary_book.worksheet(
+            config.PRIMARY_SHORT_TAB
+        ).get_all_values(value_render_option="UNFORMATTED_VALUE")
         primary_shortlist = parse_primary_short_candidates(primary_short_values)
-        primary_dataset_values = primary_book.worksheet("Dataset").get_all_values()
+        primary_dataset_values = primary_book.worksheet("Dataset").get_all_values(
+            value_render_option="UNFORMATTED_VALUE"
+        )
         primary_shortlist = merge_primary_short_dataset_signals(primary_shortlist, primary_short_values,
                                                                  primary_dataset_values)
         primary_headers = primary_short_values[2]

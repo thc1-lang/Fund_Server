@@ -15240,7 +15240,14 @@ def open_workbook(config: EngineConfig) -> Any:
 def read_control_panel_indicator_name(
     workbook: Any, control_cell: str = CONTROL_PANEL_FIRST_INDICATOR_CELL
 ) -> str:
-    name = workbook.worksheet(CONTROL_PANEL_SHEET_NAME).acell(control_cell).value
+    worksheet = call_with_backoff(
+        lambda: workbook.worksheet(CONTROL_PANEL_SHEET_NAME),
+        operation_name="control_panel_worksheet",
+    )
+    name = call_with_backoff(
+        lambda: worksheet.acell(control_cell).value,
+        operation_name=f"control_panel_acell[{control_cell}]",
+    )
     if is_blank(name):
         raise ValueError(f"{CONTROL_PANEL_SHEET_NAME}!{control_cell} is blank")
     return str(name).strip()
@@ -15824,7 +15831,14 @@ def read_control_panel_indicator_specs(
     workbook: Any, control_range: str, stop_at_first_blank: bool
 ) -> list[BatchIndicatorSpec]:
     column, start_row, _ = _parse_a1_single_column_range(control_range)
-    values = workbook.worksheet(CONTROL_PANEL_SHEET_NAME).get(control_range)
+    worksheet = call_with_backoff(
+        lambda: workbook.worksheet(CONTROL_PANEL_SHEET_NAME),
+        operation_name="control_panel_worksheet",
+    )
+    values = call_with_backoff(
+        lambda: worksheet.get(control_range),
+        operation_name=f"control_panel_get[{control_range}]",
+    )
     return _control_values_to_specs(values, column, start_row, stop_at_first_blank)
 
 
@@ -15875,15 +15889,25 @@ def process_indicator(
             spec.sheet_name,
             spec.control_cell,
         )
-        worksheet = workbook.worksheet(spec.sheet_name)
+        worksheet = call_with_backoff(
+            lambda: workbook.worksheet(spec.sheet_name),
+            operation_name=f"worksheet[{spec.sheet_name}]",
+        )
         engine_spec = select_indicator_engine_spec(spec.sheet_name, spec.control_cell)
         input_range = f"{engine_spec.input_start_col}2:{engine_spec.input_end_col}"
         if engine_spec.input_value_render_option:
-            input_values = worksheet.get(
-                input_range, value_render_option=engine_spec.input_value_render_option
+            input_values = call_with_backoff(
+                lambda: worksheet.get(
+                    input_range,
+                    value_render_option=engine_spec.input_value_render_option,
+                ),
+                operation_name=f"worksheet_get[{spec.sheet_name}:{input_range}]",
             )
         else:
-            input_values = worksheet.get(input_range)
+            input_values = call_with_backoff(
+                lambda: worksheet.get(input_range),
+                operation_name=f"worksheet_get[{spec.sheet_name}:{input_range}]",
+            )
         raw_df = read_indicator_values(input_values, engine_spec.input_end_col)
         output_df = engine_spec.calculate(raw_df)
         output_columns = engine_spec.output_columns
@@ -16108,7 +16132,11 @@ def batch_update_values(
                     sheet_name, cell_range = _parse_quoted_sheet_range(
                         str(update["range"])
                     )
-                    workbook.worksheet(sheet_name).update(
+                    worksheet = call_with_backoff(
+                        lambda sheet_name=sheet_name: workbook.worksheet(sheet_name),
+                        operation_name=f"worksheet[{sheet_name}]",
+                    )
+                    worksheet.update(
                         range_name=cell_range,
                         values=update["values"],
                         value_input_option=value_input_option,
