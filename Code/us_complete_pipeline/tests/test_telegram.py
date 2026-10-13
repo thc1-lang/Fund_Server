@@ -369,11 +369,32 @@ def test_control_panel_reads_use_quota_backoff(monkeypatch):
     assert operations == ["control_panel_worksheet", "control_panel_get[A3:A]"]
 
 
+def test_quota_retry_waits_for_minute_reset(monkeypatch):
+    import us_indicator_analysis as analysis
+
+    delays = []
+    monkeypatch.setattr(analysis.time, "sleep", delays.append)
+    monkeypatch.setattr(analysis.random, "uniform", lambda *_: 0)
+    calls = 0
+
+    def flaky():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("429 quota exceeded")
+        return "ok"
+
+    assert analysis.call_with_backoff(flaky, operation_name="test") == "ok"
+    assert calls == 2
+    assert delays == [65.0]
+
+
 def test_parent_suppresses_child_notifications(alerts, monkeypatch, tmp_path):
     credential = tmp_path / "credentials.json"
     credential.write_text("{}")
     monkeypatch.setattr(runner, "ROOT", tmp_path)
     monkeypatch.setattr(runner, "dependencies", lambda: None)
+    monkeypatch.setattr(runner, "wait_for_sheet_quota", lambda: None)
 
     def stage(index, total, name, command, env, log):
         assert env["US_PIPELINE_NOTIFICATIONS_MANAGED"] == "1"

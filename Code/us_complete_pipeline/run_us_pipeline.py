@@ -240,6 +240,15 @@ def run_stage(index, total, name, command, env, log):
     return {"stage": name, "status": "completed", "seconds": round(elapsed, 2)}
 
 
+def wait_for_sheet_quota():
+    """Allow the importer's Google Sheets read quota window to clear."""
+    print("WAIT | Allowing Google Sheets read quota to reset (65s)", flush=True)
+    deadline = time.monotonic() + 65
+    while (remaining := deadline - time.monotonic()) > 0:
+        check_stop()
+        time.sleep(min(1, remaining))
+
+
 def main(argv=None):
     global STOP_REQUEST
     args = parse_args(argv)
@@ -358,6 +367,8 @@ def _run(args):
         )
         with (run_dir / "pipeline.log").open("w") as log:
             for index, (name, command) in enumerate(commands, 1):
+                if index == 2 and args.stage == "all":
+                    wait_for_sheet_quota()
                 report["current_stage"] = f"{index}/{len(commands)} {name}"
                 save_report()
                 stage_event(index, len(commands), name, "started")

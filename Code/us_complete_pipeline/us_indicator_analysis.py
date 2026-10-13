@@ -16030,7 +16030,10 @@ def call_with_backoff(
         except Exception as exc:
             if not is_quota_error(exc) or attempt == max_attempts:
                 raise
-            sleep_for = base_sleep_seconds * (2 ** (attempt - 1)) + random.uniform(
+            # Sheets read quotas reset per minute. Short exponential retries can
+            # consume every attempt before the quota has recovered, especially
+            # just after the importer has read the same workbook.
+            sleep_for = max(65.0, base_sleep_seconds * (2 ** (attempt - 1))) + random.uniform(
                 0, 0.5
             )
             LOGGER.warning(
