@@ -223,12 +223,13 @@ def score_expanded(
     ).clip(0, 100)
     data_pass = independent_group_cov.ge(min_factor_coverage) & family_coverage.ge(min_factor_coverage) & denom.gt(0)
     short_data_pass = short_group_cov.ge(min_factor_coverage) & short_family_coverage.ge(min_factor_coverage) & short_denom.gt(0)
-    raw_long = long.clip(0, 100).where(data_pass)
-    raw_short = short.clip(0, 100).where(short_data_pass)
-    reliability = out["Score Confidence"] / 100.0
-    adjusted_long = (50.0 + reliability * (raw_long - 50.0)).clip(0, 100)
-    short_reliability = out["Short Score Confidence"] / 100.0
-    adjusted_short = (50.0 + short_reliability * (raw_short - 50.0)).clip(0, 100)
+    # Missing inputs are never treated as adverse evidence.  A score is the
+    # weighted view of the evidence present; coverage and the data regime tell
+    # the analyst how much of the intended model could be observed.
+    raw_long = long.clip(0, 100).where(denom.gt(0))
+    raw_short = short.clip(0, 100).where(short_denom.gt(0))
+    adjusted_long = raw_long
+    adjusted_short = raw_short
     structurally_applicable_family_weight = family_weight_total
     out["Quant Composite Total Configured Weight"] = structurally_applicable_family_weight
     out["Quant Composite Applicable Weight"] = denom
@@ -251,6 +252,10 @@ def score_expanded(
     out["Expanded Long Score"] = adjusted_long
     out["Expanded Short Score"] = adjusted_short
     out["Expanded Net Quant Score"] = adjusted_long - adjusted_short
-    out["Data Status"] = np.where(data_pass, "SUFFICIENT", "INSUFFICIENT DATA")
-    out["Short Data Status"] = np.where(short_data_pass, "SUFFICIENT", "INSUFFICIENT DATA")
+    out["Data Status"] = np.where(data_pass, "SUFFICIENT", "LIMITED DATA")
+    out["Short Data Status"] = np.where(short_data_pass, "SUFFICIENT", "LIMITED DATA")
+    out["Primary Data Regime"] = np.where(data_pass, "STANDARD_DATA", "LIMITED_DATA")
+    out["Primary Data Regime Reasons"] = np.where(
+        data_pass, "", "SCORING_COMPONENT_COVERAGE_BELOW_STANDARD; REVIEW_WITH_QUALITATIVE_ANALYSIS"
+    )
     return pd.DataFrame(out, index=df.index)

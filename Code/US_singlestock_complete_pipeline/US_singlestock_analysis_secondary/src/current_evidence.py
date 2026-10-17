@@ -84,14 +84,15 @@ def ttm_metric(payload: dict[str, Any], metric: str, currency: str,
     if annual.empty:
         return None, "ANNUAL_FACT_MISSING", []
     base = annual.iloc[-1].to_dict()
-    base_end = pd.Timestamp(base["end"])
-    if pd.Timestamp(latest_report_end) < base_end:
+    base_end = pd.Timestamp(base["end"]).normalize()
+    latest_end = pd.Timestamp(latest_report_end).normalize()
+    if latest_end < base_end:
         return None, "REPORT_PERIOD_CONFLICT", [base]
-    if pd.Timestamp(latest_report_end) == base_end:
+    if latest_end == base_end:
         return float(base["value"]), "ANNUAL_AS_TTM", [base]
     quarter = _quarter_rows(payload, metric, str(base["unit"]), str(base["concept"]), decision_at)
-    current = [f for f in quarter if pd.Timestamp(f["start"]) > base_end
-               and pd.Timestamp(f["start"]) - base_end <= pd.Timedelta(days=7)
+    current = [f for f in quarter if pd.Timestamp(f["start"]).normalize() > base_end
+               and (pd.Timestamp(f["start"]).normalize() - base_end).days <= 7
                and f["end"] == latest_report_end and _available(f, accepted, decision_at)]
     if not current:
         return None, "CURRENT_YTD_MISSING_OR_CONCEPT_CHANGED", [base]

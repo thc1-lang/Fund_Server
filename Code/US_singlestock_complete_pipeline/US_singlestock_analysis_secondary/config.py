@@ -31,7 +31,7 @@ CATEGORIES = {
 }
 
 GENERAL_DEFAULTS = {
-    "MODEL_VERSION": "secondary_trend_first_v22",
+    "MODEL_VERSION": "secondary_trend_diffusion_v23",
     "CURRENT_MAX_CLOSE_AGE_DAYS": 5,
     "CURRENT_MIN_DOLLAR_VOLUME_20D": 10000000.0,
     "CURRENT_MIN_PRICE": 5.0,
@@ -100,10 +100,12 @@ GENERAL_DEFAULTS = {
     "MIN_FAMILY_METRIC_COVERAGE": 0.50,
     "MIN_CROSS_SECTION_OBSERVATIONS": 10,
     "CROSS_SECTION_SHRINKAGE_STRENGTH": 10.0,
-    "SECTOR_PEER_WEIGHT": 0.35,
-    "MIN_SECTOR_PEER_OBSERVATIONS": 4,
-    "SECTOR_PEER_SHRINKAGE_STRENGTH": 5.0,
     "MIN_TREND_OBSERVATIONS": 4,
+    # Exponential time diffusion for Secondary trend and momentum statistics.
+    # The newest observation has weight 1 and each older annual observation is
+    # multiplied by this value. This changes evidence weighting, not score
+    # coverage or a company's economic score for having fewer observations.
+    "TREND_RECENCY_DECAY": 0.70,
     "MISSING_TREND_PENALTY_POINTS": 15.0,
     "NO_USABLE_TREND_EXTRA_PENALTY_POINTS": 20.0,
     "THREE_YEAR_TREND_RELIABILITY": 0.75,
@@ -229,6 +231,38 @@ FEATURE_SPECS = {
     "debt_to_equity_four_year_trend": ("TREND", "lower", "Annual non-negative Debt to Equity slope over up to four fiscal years"),
     "positive_revenue_growth_share": ("TREND", "higher", "Positive annual Revenue changes / possible annual transitions; missing is nonconfirming"),
     "trend_direction_breadth": ("TREND", "higher", "Share of available trend measures moving in the economically favourable direction"),
+}
+
+# Secondary is deliberately scored within the shortlisted universe, not by
+# sector.  These groups mirror Primary's duplicate-exposure architecture: a
+# family first aggregates correlated metrics into independent economic groups,
+# then aggregates those groups. A group therefore cannot gain influence merely
+# because the same underlying driver appears in several ratio forms.
+METRIC_GROUPS = {
+    "latest_roa": "returns", "latest_roe": "returns",
+    "latest_net_margin": "margins", "latest_gross_margin": "margins", "latest_pre_tax_margin": "margins",
+    "latest_sales_to_assets": "efficiency",
+    "latest_fcf_margin": "cash_generation", "latest_fcf_yield": "cash_generation",
+    "positive_fcf_share": "cash_generation", "cash_conversion": "cash_conversion",
+    "latest_current_ratio": "liquidity", "latest_quick_ratio": "liquidity", "latest_working_capital_to_assets": "liquidity",
+    "latest_debt_to_equity": "leverage", "latest_interest_coverage": "leverage", "latest_net_debt_to_ebitda": "leverage",
+    "positive_net_income_share": "earnings_stability", "revenue_growth_stability": "earnings_stability",
+    "latest_ev_ebitda": "enterprise_value", "latest_ev_ebit": "enterprise_value", "latest_price_fcf": "cash_flow_value",
+    "revenue_cagr": "revenue_growth", "latest_revenue_growth": "revenue_growth",
+    "revenue_growth_acceleration": "revenue_acceleration", "net_margin_change": "margin_inflection",
+    "fcf_margin_change": "cash_flow_inflection", "roa_change": "margin_inflection",
+    "ebit_margin_change": "margin_inflection", "debt_to_equity_change": "deleveraging",
+    "revenue_four_year_trend": "revenue_trend", "net_margin_four_year_trend": "margin_trend",
+    "fcf_margin_four_year_trend": "cash_flow_trend", "roa_four_year_trend": "margin_trend",
+    "gross_margin_four_year_trend": "margin_trend", "debt_to_equity_four_year_trend": "deleveraging_trend",
+    "positive_revenue_growth_share": "revenue_trend", "trend_direction_breadth": "trend_breadth",
+}
+
+SHORT_METRIC_GROUPS = {
+    **{metric: METRIC_GROUPS.get(metric, metric) for metric in FEATURE_SPECS},
+    "primary_short_score": "primary_short_thesis",
+    "primary_price_change_4w": "price_momentum", "primary_price_change_12w": "price_momentum",
+    "primary_f1_estimate_change_4w": "estimate_revisions", "primary_f2_estimate_change_4w": "estimate_revisions",
 }
 
 METRIC_WEIGHTS = {

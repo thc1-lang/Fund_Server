@@ -28,17 +28,18 @@ ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
 DEFAULT_SEC_USER_AGENT = "Theo Cooper t.h.c.1@icloud.com"
 MONEY_UNITS = ("USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "HKD")
 OUTPUT_COLUMNS = [
-    "Ticker", "Fiscal Year", "Fiscal Period End", "Revenue", "Net Income", "EBIT", "EBITDA",
+    "Ticker", "Fiscal Year", "Fiscal Period End", "Revenue", "Net Income", "Operating Income", "EBIT", "EBITDA",
     "Interest Expense", "Interest Coverage Ratio", "Current Assets", "Current Liabilities",
-    "Total Assets", "Shareholders Equity", "Operating Cash Flow", "Free Cash Flow",
-    "Year End Price", "Market Cap", "Cash", "Total Debt", "Enterprise Value",
+    "Total Assets", "Total Liabilities", "Shareholders Equity", "Inventory", "Accounts Receivable", "Accounts Payable",
+    "Operating Cash Flow", "Capital Expenditure", "Free Cash Flow", "Investing Cash Flow", "Financing Cash Flow", "Dividends Paid",
+    "Year End Price", "Market Cap", "Cash", "Long-Term Debt", "Current Debt", "Total Debt", "Total Debt Definition", "Enterprise Value",
     "Free Cash Flow Yield", "Current Ratio", "Quick Ratio", "Working Capital to Total Assets Ratio",
     "Sales to Assets Ratio", "Return on Assets Ratio", "Return on Equity Ratio", "EV / EBIT",
     "EV / EBITDA", "Gross Margin", "Net Margin", "Debt to Equity Ratio",
     "Price / Free Cash Flow Per Share", "Pre-Tax Profit Ratio", "Price Date", "Price Source",
     "Price Currency", "Shares Outstanding", "Market Cap Currency", "Revenue Source Concept", "Revenue Filed", "CIK", "Accession",
     "Form", "Accepted At", "Statement Currency", "ADR Ratio", "Fact Provenance JSON", "Audit Notes",
-    "Missing Data Notes", "Data Source", "Error",
+    "Missing Data Notes", "Statement Reconciliation Status", "Market Data Alignment Status", "Source Data Regime", "Data Source", "Error",
 ]
 
 # Concept order is policy.  The importer keeps the selected concept and filing
@@ -52,11 +53,19 @@ CONCEPTS: dict[str, tuple[bool, str, tuple[tuple[str, str], ...]]] = {
     "current_assets": (False, "money", (("us-gaap", "AssetsCurrent"), ("ifrs-full", "CurrentAssets"))),
     "current_liabilities": (False, "money", (("us-gaap", "LiabilitiesCurrent"), ("ifrs-full", "CurrentLiabilities"))),
     "assets": (False, "money", (("us-gaap", "Assets"), ("ifrs-full", "Assets"))),
+    "liabilities": (False, "money", (("us-gaap", "Liabilities"), ("ifrs-full", "Liabilities"))),
     "equity": (False, "money", (("us-gaap", "StockholdersEquity"), ("us-gaap", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"), ("ifrs-full", "Equity"))),
+    "inventory": (False, "money", (("us-gaap", "InventoryNet"), ("ifrs-full", "Inventories"))),
+    "receivables": (False, "money", (("us-gaap", "AccountsReceivableNetCurrent"), ("us-gaap", "AccountsNotesAndLoansReceivableNetCurrent"), ("ifrs-full", "TradeAndOtherCurrentReceivables"))),
+    "payables": (False, "money", (("us-gaap", "AccountsPayableCurrent"), ("ifrs-full", "TradeAndOtherCurrentPayables"))),
     "ocf": (True, "money", (("us-gaap", "NetCashProvidedByUsedInOperatingActivities"), ("ifrs-full", "CashFlowsFromUsedInOperatingActivities"))),
     "capex": (True, "money", (("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment"), ("us-gaap", "PaymentsToAcquireProductiveAssets"), ("ifrs-full", "PaymentsToAcquirePropertyPlantAndEquipmentClassifiedAsInvestingActivities"))),
+    "investing_cash_flow": (True, "money", (("us-gaap", "NetCashProvidedByUsedInInvestingActivities"), ("ifrs-full", "CashFlowsFromUsedInInvestingActivities"))),
+    "financing_cash_flow": (True, "money", (("us-gaap", "NetCashProvidedByUsedInFinancingActivities"), ("ifrs-full", "CashFlowsFromUsedInFinancingActivities"))),
+    "dividends": (True, "money", (("us-gaap", "PaymentsOfDividends"), ("us-gaap", "PaymentsOfDividendsCommonStock"), ("ifrs-full", "DividendsPaidClassifiedAsFinancingActivities"))),
     "cash": (False, "money", (("us-gaap", "CashAndCashEquivalentsAtCarryingValue"), ("us-gaap", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"), ("ifrs-full", "CashAndCashEquivalents"))),
     "debt": (False, "money", (("us-gaap", "LongTermDebtAndFinanceLeaseObligations"), ("us-gaap", "LongTermDebt"), ("ifrs-full", "Borrowings"))),
+    "debt_current": (False, "money", (("us-gaap", "LongTermDebtAndFinanceLeaseObligationsCurrent"), ("us-gaap", "LongTermDebtCurrent"), ("us-gaap", "ShortTermBorrowings"))),
     # Only an instant share count at the fiscal end can support a fiscal-end
     # market cap. DEI filing-date shares and weighted-average shares cannot.
     "shares": (False, "shares", (("us-gaap", "CommonStockSharesOutstanding"), ("dei", "EntityCommonStockSharesOutstanding"))),
@@ -369,8 +378,9 @@ def company_rows(ticker: str, payload: dict[str, Any], price_session: requests.S
     for fiscal_end, year, source_fy in zip(periods, years, anchor_years):
         selected = {name: _fact(facts, name, fiscal_end) for name in CONCEPTS}
         rev, ni, ebit, da, interest = (selected[name] for name in ("revenue", "net_income", "ebit", "da", "interest"))
-        ca, cl, assets, equity = (selected[name] for name in ("current_assets", "current_liabilities", "assets", "equity"))
-        ocf, capex, cash, debt, shares = (selected[name] for name in ("ocf", "capex", "cash", "debt", "shares"))
+        ca, cl, assets, liabilities, equity = (selected[name] for name in ("current_assets", "current_liabilities", "assets", "liabilities", "equity"))
+        inventory, receivables, payables = (selected[name] for name in ("inventory", "receivables", "payables"))
+        ocf, capex, investing, financing, dividends, cash, debt, debt_current, shares = (selected[name] for name in ("ocf", "capex", "investing_cash_flow", "financing_cash_flow", "dividends", "cash", "debt", "debt_current", "shares"))
         gp, cor, pretax = (selected[name] for name in ("gross_profit", "cost_of_revenue", "pretax"))
         price = prices[fiscal_end] if use_batch_prices else fiscal_end_price(ticker, fiscal_end, price_session, settings)
         capex_value = abs(capex["value"]) if capex else None
@@ -380,7 +390,29 @@ def company_rows(ticker: str, payload: dict[str, Any], price_session: requests.S
         foreign_annual = any(record and str(record.get("form", "")).startswith(("20-F", "40-F"))
                              for record in (rev, ni, ocf))
         market_cap = price["price"] * shares["value"] if price["price"] is not None and shares and not foreign_annual else None
-        ev = market_cap + debt["value"] - cash["value"] if market_cap is not None and _same_unit(cash, debt) and str(cash["unit"]).upper() == price["currency"] else None
+        # Do not silently add a debt fact whose XBRL meaning may already include
+        # the current portion.  Only compose Total Debt when the selected fact is
+        # explicitly non-current; otherwise preserve the disclosed line and make
+        # the limitation visible to the analyst.
+        debt_concept = str(debt.get("concept", "")) if debt else ""
+        explicitly_noncurrent = debt_concept in {
+            "LongTermDebt", "LongTermDebtNoncurrent",
+            "LongTermDebtAndFinanceLeaseObligationsNoncurrent",
+        }
+        if debt and debt_current and _same_unit(debt, debt_current) and explicitly_noncurrent:
+            total_debt = debt["value"] + debt_current["value"]
+            total_debt_definition = "COMPOSED_NONCURRENT_PLUS_CURRENT"
+        elif debt and not debt_current:
+            total_debt = debt["value"]
+            total_debt_definition = "REPORTED_LONG_TERM_ONLY"
+        elif debt_current and not debt:
+            total_debt = debt_current["value"]
+            total_debt_definition = "REPORTED_CURRENT_ONLY"
+        else:
+            total_debt = None
+            total_debt_definition = "UNAVAILABLE_OR_DEFINITION_REVIEW_REQUIRED"
+        debt_ratio_record = debt if debt else debt_current
+        ev = market_cap + total_debt - cash["value"] if market_cap is not None and total_debt is not None and cash and str(cash["unit"]).upper() == price["currency"] else None
         def unit_ratio(a: dict[str, Any] | None, b: dict[str, Any] | None) -> float | None:
             return _divide(a["value"], b["value"]) if _same_unit(a, b) else None
         audit = []
@@ -394,6 +426,10 @@ def company_rows(ticker: str, payload: dict[str, Any], price_session: requests.S
             audit.append("ADR/share conversion unverified; historical market cap unavailable")
         if source_fy != year:
             audit.append(f"SEC comparative FY {source_fy} relabelled to period-sequence FY {year}")
+        statement_reconciled = _same_unit(assets, liabilities, equity) and abs(assets["value"] - liabilities["value"] - equity["value"]) <= max(1.0, abs(assets["value"]) * 0.01)
+        fcf_reconciled = fcf is not None and capex_value is not None and abs(fcf - (ocf["value"] - capex_value)) <= max(1.0, abs(fcf) * 1e-9)
+        statement_status = "RECONCILED" if statement_reconciled and fcf_reconciled else "REVIEW_REQUIRED"
+        market_alignment = "ALIGNED" if market_cap is not None and price["price"] is not None and shares else "UNAVAILABLE_OR_UNALIGNED"
         statement_units = {str(record["unit"]).upper() for name, record in selected.items()
                            if record and name != "shares"}
         provenance = {name: {key: record.get(key, "") for key in ("namespace", "concept", "unit", "start", "end", "filed", "accn", "form")}
@@ -404,16 +440,16 @@ def company_rows(ticker: str, payload: dict[str, Any], price_session: requests.S
             return float(record["value"]) if record else None
         values = {
             "Ticker": ticker, "Fiscal Year": year, "Fiscal Period End": fiscal_end,
-            "Revenue": value("revenue"), "Net Income": value("net_income"), "EBIT": value("ebit"), "EBITDA": ebitda,
+            "Revenue": value("revenue"), "Net Income": value("net_income"), "Operating Income": value("ebit"), "EBIT": value("ebit"), "EBITDA": ebitda,
             "Interest Expense": value("interest"), "Interest Coverage Ratio": _divide(ebit["value"], abs(interest["value"])) if _same_unit(ebit, interest) else None,
-            "Current Assets": value("current_assets"), "Current Liabilities": value("current_liabilities"), "Total Assets": value("assets"), "Shareholders Equity": value("equity"),
-            "Operating Cash Flow": value("ocf"), "Free Cash Flow": fcf, "Year End Price": price["price"], "Market Cap": market_cap, "Cash": value("cash"), "Total Debt": value("debt"), "Enterprise Value": ev,
+            "Current Assets": value("current_assets"), "Current Liabilities": value("current_liabilities"), "Total Assets": value("assets"), "Total Liabilities": value("liabilities"), "Shareholders Equity": value("equity"), "Inventory": value("inventory"), "Accounts Receivable": value("receivables"), "Accounts Payable": value("payables"),
+            "Operating Cash Flow": value("ocf"), "Capital Expenditure": capex_value, "Free Cash Flow": fcf, "Investing Cash Flow": value("investing_cash_flow"), "Financing Cash Flow": value("financing_cash_flow"), "Dividends Paid": value("dividends"), "Year End Price": price["price"], "Market Cap": market_cap, "Cash": value("cash"), "Long-Term Debt": value("debt"), "Current Debt": value("debt_current"), "Total Debt": total_debt, "Total Debt Definition": total_debt_definition, "Enterprise Value": ev,
             "Free Cash Flow Yield": _divide(fcf, market_cap) if fcf is not None and market_cap is not None and str(ocf["unit"]).upper() == price["currency"] else None,
             "Current Ratio": unit_ratio(ca, cl), "Quick Ratio": None, "Working Capital to Total Assets Ratio": _divide(ca["value"] - cl["value"], assets["value"]) if _same_unit(ca, cl, assets) else None,
             "Sales to Assets Ratio": unit_ratio(rev, assets), "Return on Assets Ratio": unit_ratio(ni, assets), "Return on Equity Ratio": unit_ratio(ni, equity),
             "EV / EBIT": _divide(ev, ebit["value"]) if ev is not None and ebit and str(ebit["unit"]).upper() == price["currency"] else None,
             "EV / EBITDA": _divide(ev, ebitda) if ev is not None and ebitda is not None and ebit and str(ebit["unit"]).upper() == price["currency"] else None,
-            "Gross Margin": _divide(gross_profit, rev["value"]) if gross_profit is not None and rev else None, "Net Margin": unit_ratio(ni, rev), "Debt to Equity Ratio": unit_ratio(debt, equity),
+            "Gross Margin": _divide(gross_profit, rev["value"]) if gross_profit is not None and rev else None, "Net Margin": unit_ratio(ni, rev), "Debt to Equity Ratio": _divide(total_debt, equity["value"]) if total_debt is not None and _same_unit(debt_ratio_record, equity) else None,
             "Price / Free Cash Flow Per Share": _divide(price["price"], _divide(fcf, shares["value"])) if price["price"] is not None and fcf is not None and shares and str(ocf["unit"]).upper() == price["currency"] else None,
             "Pre-Tax Profit Ratio": unit_ratio(pretax, rev), "Price Date": price["date"], "Price Source": price["source"], "Price Currency": price["currency"],
             "Shares Outstanding": value("shares"), "Market Cap Currency": price["currency"] if market_cap is not None else "",
@@ -423,7 +459,8 @@ def company_rows(ticker: str, payload: dict[str, Any], price_session: requests.S
             "Accepted At": accepted.get(str(rev.get("accn", "")), "") if rev else "",
             "Statement Currency": next(iter(statement_units)) if len(statement_units) == 1 else "",
             "ADR Ratio": "", "Fact Provenance JSON": json.dumps(provenance, sort_keys=True),
-            "Audit Notes": "; ".join(audit),
+            "Audit Notes": "; ".join(audit), "Statement Reconciliation Status": statement_status,
+            "Market Data Alignment Status": market_alignment, "Source Data Regime": "CURRENT_SEC_SNAPSHOT",
             "Data Source": "SEC CompanyFacts + Yahoo chart HTTP price", "Error": "MIXED_STATEMENT_CURRENCIES" if len(statement_units) > 1 else "",
         }
         values["Missing Data Notes"] = "; ".join(name for name, value in values.items() if name in OUTPUT_COLUMNS and value is None)

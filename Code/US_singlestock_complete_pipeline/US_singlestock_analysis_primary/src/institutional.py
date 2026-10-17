@@ -269,7 +269,16 @@ def coverage_audit(df: pd.DataFrame) -> pd.DataFrame:
     out["advanced_quality_metrics_available"] = False
     out["time_series_metrics_available"] = False
     out["data_quality_score_0_100"] = (0.6 * out["quant_ranking_coverage_score"] + 0.4 * underwriting).clip(0, 100)
+    out["primary_financial_statement_coverage_score"] = underwriting.clip(0, 100)
+    out["primary_source_verification_status"] = "UNVERIFIED_VENDOR_SNAPSHOT"
+    out["primary_data_regime"] = np.where(
+        out["quant_ranking_coverage_score"].ge(70), "STANDARD_DATA", "LIMITED_DATA"
+    )
+    out["primary_data_regime_reasons"] = np.where(
+        out["primary_data_regime"].eq("STANDARD_DATA"), "",
+        "SCORING_COMPONENT_COVERAGE_BELOW_STANDARD; QUALITATIVE_REVIEW_REQUIRED",
+    )
     out["implementation_readiness_status"] = np.where(df.get("tradability_gate_pass", False), "LONG_IMPLEMENTATION_GATE_PASS", "IMPLEMENTATION_BLOCKED")
     out["institutional_underwriting_readiness"] = pd.cut(underwriting, [-1, 60, 75, 90, 101], labels=["SCREENING_QUALITY_ONLY", "MATERIALLY_INCOMPLETE", "ANALYST_REVIEW_REQUIRED", "CLOSE_TO_MEMO_READINESS"], right=False).astype(str)
-    out["data_quality_summary"] = "Quant ranking coverage is measured separately from institutional underwriting; unavailable EV, FCF, interest, advanced-quality and price-history metrics are not scored as zero."
+    out["data_quality_summary"] = "Quant ranking, financial-statement, source-verification and institutional-underwriting coverage are separate. Missing observations are never converted to adverse scores; LIMITED_DATA requires qualitative review."
     return out

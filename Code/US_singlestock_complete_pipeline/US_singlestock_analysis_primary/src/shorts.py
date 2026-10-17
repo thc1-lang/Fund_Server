@@ -12,7 +12,7 @@ SHORT_WEIGHTS = config.short_weights()
 
 def short_rules() -> str:
     return (f"Short screening rules: minimum Short score {config.MIN_SHORT_SCORE:g}; "
-            f"minimum confidence {config.MIN_CANDIDATE_CONFIDENCE:g}; top {config.TOP_N_LONG} per industry; "
+            f"top {config.TOP_N_LONG} per industry; "
             f"display up to {config.SHORT_DISPLAY_TOP_N}. At least {config.SHORT_MIN_WEAK_FAMILIES} weak families "
             f"score {config.SHORT_WEAK_FAMILY_SCORE:g}+ with a non-valuation weakness. "
             "Change MIN_SHORT_SCORE, SHORT_DISPLAY_TOP_N, SHORT_WEIGHT_* and thesis controls in Control Panel, then rerun. "
@@ -33,7 +33,6 @@ def score_shorts(df: pd.DataFrame) -> pd.DataFrame:
     from .ranking import rank_quant_candidates
     score = pd.to_numeric(df["Expanded Short Score"], errors="coerce")
     raw = pd.to_numeric(df["Expanded Raw Short Score"], errors="coerce")
-    sufficient = df.get("Short Data Status", df["Data Status"]).eq("SUFFICIENT")
     ranked = rank_quant_candidates(
         df, config.TOP_N_LONG, config.TOP_N_LONG, config.MIN_LONG_SCORE, config.MIN_SHORT_SCORE,
         config.MAX_QUANT_LONGS_TOTAL, config.SHORT_DISPLAY_TOP_N, config.MIN_CANDIDATE_CONFIDENCE,
@@ -42,8 +41,8 @@ def score_shorts(df: pd.DataFrame) -> pd.DataFrame:
     rank = ranked["Short Selection Rank"]
     confidence = pd.to_numeric(df.get("Short Score Confidence", df["Score Confidence"]), errors="coerce")
     gates = pd.DataFrame({
-        "Data": sufficient & score.notna(),
-        "Confidence": confidence.ge(config.MIN_CANDIDATE_CONFIDENCE),
+        "Scored": score.notna(),
+        "Coverage review": pd.Series(True, index=df.index),
         "Score": score.ge(config.MIN_SHORT_SCORE),
         "Tradability": df.get("short_tradability_gate_pass", pd.Series(True, index=df.index)).fillna(False),
         "Classification": df.get("economic_classification_verified", pd.Series(True, index=df.index)).fillna(False),
@@ -90,7 +89,7 @@ def short_sheet_values(df: pd.DataFrame, as_of: str | None = None) -> list[list[
     if selected.empty:
         rows.append(["Display count is set to zero." if config.SHORT_DISPLAY_TOP_N == 0 else "No stocks meet the shared quantitative selection criteria."])
     rows += [[""], ["SELECTION RULES", short_rules()],
-        ["SCORE METHOD", "Separate Short family weights reward current valuation excess and financial weakness. A current-state thesis gate is required. Family contributions sum to raw Short score; final = 50 + confidence/100 * (raw - 50)."],
+        ["SCORE METHOD", "Separate Short family weights reward current valuation excess and financial weakness. A current-state thesis gate is required. Family contributions sum to the final Short score over observed inputs; coverage is a LIMITED_DATA review regime, not a score adjustment or selection veto."],
         ["INTERPRETATION", "Research screen, not an execution instruction or validated trading edge. Thresholds were not optimised on historical returns."]]
     return _sheet_values(rows)
 

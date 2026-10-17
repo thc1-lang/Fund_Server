@@ -13,7 +13,7 @@ from src.schema import REQUIRED_HEADERS, validate_headers
 from src.scoring import RAW_SIGNALS, active_signal_registry, score_expanded
 from src.sheets_writer import (_retry_after_seconds, _section_ranges, _sheet_values,
                                build_helper_table, build_industry_summary, build_metric_registry,
-                               build_quant_summary, build_strategy_summary, helper_sheet_name,
+                               build_quant_summary, build_strategy_summary, ensure_analysis_sheets, helper_sheet_name,
                                reconcile_tabs, validate_destination, write_analysis_batch)
 from src.strategies import reconstruct_strategy_score, score_strategies
 from src.transformations import DERIVED_FEATURES, derive_eg2, inverse_positive, natural_log, percent_to_decimal, safe_div, signed_log
@@ -162,6 +162,32 @@ def test_exact_tab_matching_and_destination_safety():
     assert m.matched == ["Oil & Gas"] and "Banks" in m.missing and "banks" in m.unexpected
     with pytest.raises(ValueError): validate_destination("a", None, False)
     with pytest.raises(ValueError): validate_destination("a", "a", False)
+
+
+def test_new_industry_tab_is_created_only_when_enabled():
+    class FakeBook:
+        def __init__(self):
+            self.sheets = [{"properties": {"title": "Dataset", "sheetId": 1,
+                                           "gridProperties": {"rowCount": 10, "columnCount": 10}}}]
+            self.added = []
+
+        def batch_update(self, payload):
+            for request in payload["requests"]:
+                if "addSheet" in request:
+                    props = request["addSheet"]["properties"]
+                    self.added.append(props["title"])
+                    self.sheets.append({"properties": {**props, "sheetId": len(self.sheets) + 1}})
+
+        def fetch_sheet_metadata(self):
+            return {"sheets": self.sheets}
+
+    for enabled in (False, True):
+        book = FakeBook()
+        ensure_analysis_sheets(book, ["Semiconductors - Power"], book.fetch_sheet_metadata(),
+                               helper_column_count=30, industry_sizes={"Semiconductors - Power": 4},
+                               create_industry_tabs=enabled)
+        assert ("Semiconductors - Power" in book.added) is enabled
+        assert "Semiconductors - Power - Helper" in book.added
 
 
 def test_sheet_values_are_json_serializable():
@@ -362,7 +388,7 @@ def test_ranking_ties_are_deterministic_and_bounded():
     assert out["Expanded Long Rank"].max() == 4
 
 
-def test_quant_candidates_have_confidence_gate_and_global_caps():
+def test_quant_candidates_use_scores_for_global_caps_when_coverage_is_limited():
     df = pd.DataFrame({
         "Ticker": ["A", "B", "C", "D", "E", "F"],
         "Industry": ["I1", "I2", "I3", "I4", "I5", "I6"],
@@ -373,7 +399,7 @@ def test_quant_candidates_have_confidence_gate_and_global_caps():
     })
     out = rank_quant_candidates(df, 3, 3, 55, 55, 1, 1, 85)
     assert out.loc[out["Quantitative Candidate"].eq("QUANT LONG"), "Ticker"].tolist() == ["A"]
-    assert out.loc[out["Quantitative Candidate"].eq("QUANT SHORT"), "Ticker"].tolist() == ["E"]
+    assert out.loc[out["Quantitative Candidate"].eq("QUANT SHORT"), "Ticker"].tolist() == ["F"]
 
 
 def test_balance_sheet_gate_filters_selection_but_preserves_research_rank():

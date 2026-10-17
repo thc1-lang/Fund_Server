@@ -169,11 +169,8 @@ def test_minimum_trend_observations_is_effective():
     controls = default_controls()
     controls["MIN_CROSS_SECTION_OBSERVATIONS"] = 2
     analysis = score_category(features, pd.DataFrame(), "Safe", controls)
-    expected_penalty = (
-        (1 - analysis["effective_trend_reliability"]) * controls["MISSING_TREND_PENALTY_POINTS"]
-        + analysis["effective_trend_reliability"].eq(0) * controls["NO_USABLE_TREND_EXTRA_PENALTY_POINTS"]
-    )
-    assert (analysis["trend_data_penalty_points"] - expected_penalty).abs().max() < 1e-9
+    assert analysis["trend_data_penalty_points"].eq(0).all()
+    assert analysis["data_regime"].eq("LIMITED_DATA").all()
     family_points = [column for column in analysis if column.endswith("__contribution_points") and column.split("__", 1)[0].isupper()]
     assert (analysis[family_points].sum(axis=1) - analysis["final_score"]).abs().max() < 1e-9
 
@@ -219,15 +216,16 @@ def test_source_integrity_gate_rejects_anomaly_without_changing_score():
     assert gated.loc[0, "gate_fail_reasons"] == "source_integrity"
 
 
-def test_latest_essential_gap_blocks_model_eligibility_without_changing_score():
+def test_latest_essential_gap_is_limited_data_without_changing_score():
     analysis = pd.DataFrame({"Ticker": ["GAP", "OK"], "eligible": [True, True],
                              "gate_fail_reasons": ["", ""], "final_score": [70., 65.]})
     audit = pd.DataFrame({"Ticker": ["GAP", "GAP", "OK"], "Integrity Pass": [True] * 3,
                           "Fiscal Period End": ["2024-12-31", "2025-12-31", "2025-12-31"],
                           "Missing Essential Fields": ["", "Market Cap", ""]})
     gated = apply_integrity_gate(analysis, audit).set_index("Ticker")
-    assert not gated.loc["GAP", "eligible"]
-    assert gated.loc["GAP", "gate_fail_reasons"] == "source_essential"
+    assert gated.loc["GAP", "eligible"]
+    assert gated.loc["GAP", "gate_fail_reasons"] == ""
+    assert gated.loc["GAP", "data_regime"] == "LIMITED_DATA"
     assert gated.loc["GAP", "final_score"] == 70
     assert gated.loc["OK", "eligible"]
 
@@ -437,21 +435,16 @@ def test_theil_sen_trend_resists_one_extreme_year():
     assert abs(slope - 1.0) < 1e-12
 
 
-def test_sector_scores_are_used_only_with_enough_peers():
+def test_secondary_scores_use_the_current_shortlisted_universe_not_sector_peers():
     controls = default_controls()
     controls["MIN_CROSS_SECTION_OBSERVATIONS"] = 2
-    controls["MIN_SECTOR_PEER_OBSERVATIONS"] = 2
     metadata = pd.DataFrame({
         "Ticker": ["AAA", "BBB", "CCC"],
         "Sector": ["Technology", "Technology", "Finance"],
     })
     analysis = score_category(build_features(sample_data()), metadata, "Safe", controls)
-    tech = analysis[analysis["Ticker"].isin(["AAA", "BBB"])]
-    finance = analysis[analysis["Ticker"].eq("CCC")]
-    assert tech["latest_roa__sector_score"].notna().all()
-    assert tech["latest_roa__sector_blend_weight"].gt(0).all()
-    assert finance["latest_roa__sector_score"].isna().all()
-    assert finance["latest_roa__sector_blend_weight"].eq(0).all()
+    assert analysis["secondary_peer_universe"].eq("CURRENT_PRIMARY_SAFE_SHORTLIST").all()
+    assert not any("__sector" in column or "effective_sector" in column for column in analysis)
 
 
 def test_v5_default_duplicate_weights_are_migrated_but_custom_weights_survive():
@@ -587,7 +580,8 @@ def test_stale_and_future_financials_fail_even_when_whole_cohort_matches():
     assert stale["freshness_gate_pass"].all()  # Old relative-only check missed this.
     assert not stale["financial_age_gate_pass"].any()
     assert not future["financial_age_gate_pass"].any()
-    assert not stale.eligible.any()
+    assert stale["data_regime"].eq("LIMITED_DATA").all()
+    assert future["data_regime"].eq("LIMITED_DATA").all()
 
 
 def test_missing_recent_momentum_cannot_be_renormalised_away():
@@ -598,7 +592,7 @@ def test_missing_recent_momentum_cannot_be_renormalised_away():
     controls["MIN_CROSS_SECTION_OBSERVATIONS"] = 2
     table = score_category(build_features(raw), pd.DataFrame(), "Safe", controls, as_of="2026-09-16")
     assert not table["recent_coverage_gate_pass"].any()
-    assert not table.eligible.any()
+    assert table["data_regime"].eq("LIMITED_DATA").all()
 
 
 def test_control_parser_rejects_nonfinite_and_fractional_integer_settings():
@@ -730,7 +724,7 @@ def test_short_ranking_uses_finite_scores_with_valid_source_history():
         "max_fiscal_year_gap": [1, 1, 1, 1],
         "source_error_count": [0, 0, 0, 0],
     })
-    assert ranked_short_candidates(table)["Ticker"].tolist() == ["BBB", "AAA"]
+    assert ranked_short_candidates(table)["Ticker"].tolist() == ["CCC", "BBB", "AAA"]
 
 
 def test_primary_mirror_must_match_authoritative_summary():
@@ -1166,7 +1160,7 @@ def test_short_process_audit_keeps_primary_order_and_reports_data_status():
     audit = dict(zip(headers, rows[0]))
     assert audit["latest_revenue_growth Input"] == "NO DATA"
     assert audit["Top Ranked Display"] == "NO"
-    assert audit["Data Status"] == "Insufficient annual history"
+    assert audit["Data Status"] == "Limited annual history (review regime)"
 
 
 def test_short_data_export_keeps_only_primary_candidates_and_carries_lineage():

@@ -388,7 +388,7 @@ def test_ranking_ties_are_deterministic_and_bounded():
     assert out["Expanded Long Rank"].max() == 4
 
 
-def test_quant_candidates_have_confidence_gate_and_global_caps():
+def test_quant_candidates_use_scores_for_global_caps_when_coverage_is_limited():
     df = pd.DataFrame({
         "Ticker": ["A", "B", "C", "D", "E", "F"],
         "Industry": ["I1", "I2", "I3", "I4", "I5", "I6"],
@@ -399,7 +399,7 @@ def test_quant_candidates_have_confidence_gate_and_global_caps():
     })
     out = rank_quant_candidates(df, 3, 3, 55, 55, 1, 1, 85)
     assert out.loc[out["Quantitative Candidate"].eq("QUANT LONG"), "Ticker"].tolist() == ["A"]
-    assert out.loc[out["Quantitative Candidate"].eq("QUANT SHORT"), "Ticker"].tolist() == ["E"]
+    assert out.loc[out["Quantitative Candidate"].eq("QUANT SHORT"), "Ticker"].tolist() == ["F"]
 
 
 def test_balance_sheet_gate_filters_selection_but_preserves_research_rank():

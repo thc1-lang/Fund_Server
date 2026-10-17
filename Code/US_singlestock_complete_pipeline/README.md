@@ -29,7 +29,7 @@ The launcher runs the following dependency chain and stops immediately if any
 stage fails:
 
 1. Primary Zacks import, then Primary analysis and publication.
-2. Secondary SEC import, using the freshly published Primary selections.
+2. Secondary SEC import, using the freshly published Primary selections, with source lineage, statement reconciliation, market-data alignment and limited-data regimes retained separately from scores.
 3. Secondary analysis and publication.
 4. AI evidence-package creation and human-summary publication.
 

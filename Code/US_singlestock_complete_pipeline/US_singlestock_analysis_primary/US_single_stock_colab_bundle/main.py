@@ -155,6 +155,10 @@ def run(args) -> dict:
     result = pd.concat([result, short_thesis.rename("Short Thesis Gate Pass")], axis=1)
     result = pd.concat([result, result["economic_business_type"].isin(config.SHORT_ALLOWED_BUSINESS_TYPES).rename("Short Business Type Gate Pass")], axis=1)
     result = pd.concat([result, reconciliation_flags(result, config.PB_VALIDATION_TOLERANCE, config.MARKET_CAP_PER_SHARE_TOLERANCE)], axis=1)
+    market_alignment = ~result["Market Cap Per Share Flag"].fillna(True)
+    result["Primary Market Data Alignment Status"] = market_alignment.map({True: "ALIGNED_VENDOR_SNAPSHOT", False: "REVIEW_REQUIRED"})
+    result["Primary Source As Of"] = config.DATA_AS_OF or "NOT_PROVIDED"
+    result["Primary Point-in-Time Regime"] = "UNVERIFIED_VENDOR_SNAPSHOT"
     result = rank_quant_candidates(
         result, config.TOP_N_LONG, config.TOP_N_SHORT, config.MIN_LONG_SCORE, config.MIN_SHORT_SCORE,
         config.MAX_QUANT_LONGS_TOTAL, config.MAX_QUANT_SHORTS_TOTAL,
@@ -209,8 +213,11 @@ def run(args) -> dict:
                 destination_metadata = _retry_google_request(destination_book.fetch_sheet_metadata)
                 destination_tabs = [sheet["properties"]["title"] for sheet in destination_metadata["sheets"]]
     manifest = reconcile_tabs(result["Industry"].dropna().unique(), destination_tabs)
-    if live and not short_only and manifest.missing:
-        raise ValueError(f"Refusing write; exact destination tabs missing: {manifest.missing}")
+    if live and not short_only and manifest.missing and not config.ALLOW_CREATE_INDUSTRY_TABS:
+        raise ValueError(
+            f"Refusing write; exact destination tabs missing: {manifest.missing}. "
+            "Set ALLOW_CREATE_INDUSTRY_TABS=true to create new industry tabs during publication"
+        )
     topology_changed = bool(manifest.unexpected)
     summary = {
         "model_version": config.MODEL_VERSION,
@@ -231,8 +238,8 @@ def run(args) -> dict:
         "quant_long_count": int(result["Quantitative Candidate"].eq("QUANT LONG").sum()),
         "short_selection_count": int(result["Short Selected"].sum()),
         "quant_short_count": int(result["Quantitative Candidate"].eq("QUANT SHORT").sum()),
-        "insufficient_data_count": int(result["Data Status"].eq("INSUFFICIENT DATA").sum()),
-        "short_insufficient_data_count": int(result["Short Data Status"].eq("INSUFFICIENT DATA").sum()),
+        "limited_data_count": int(result["Data Status"].eq("LIMITED DATA").sum()),
+        "short_limited_data_count": int(result["Short Data Status"].eq("LIMITED DATA").sum()),
         "safe_scored_count": int(result["Safe Score"].notna().sum()),
         "high_growth_potential_scored_count": int(result["High Growth Potential Score"].notna().sum()),
         "turnaround_story_scored_count": int(result["Turnaround Story Score"].notna().sum()),
@@ -257,8 +264,14 @@ def run(args) -> dict:
         destination_metadata = ensure_analysis_sheets(
             destination_book, result["Industry"].dropna().unique(), destination_metadata,
             industry_sizes=result.groupby("Industry").size().astype(int).to_dict(),
+            create_industry_tabs=config.ALLOW_CREATE_INDUSTRY_TABS,
         )
         validate_generated_topology(destination_metadata, result["Industry"].dropna().unique())
+        destination_tabs = [sheet["properties"]["title"] for sheet in destination_metadata["sheets"]]
+        manifest = reconcile_tabs(result["Industry"].dropna().unique(), destination_tabs)
+        summary["matched_tabs"] = len(manifest.matched)
+        summary["missing_tabs"] = len(manifest.missing)
+        summary["unexpected_tabs"] = len(manifest.unexpected)
         _progress(args, f"Writing and formatting {len(manifest.matched) * 2 + 6:,} Google Sheets tabs", started)
         summary["tabs_updated"] = write_analysis_batch(
             book=destination_book,

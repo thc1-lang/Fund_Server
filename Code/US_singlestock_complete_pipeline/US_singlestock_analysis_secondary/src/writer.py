@@ -140,7 +140,7 @@ def write_current_evidence_tab(book, worksheets: dict[str, Any], evidence: pd.Da
 
 def delete_retired_output_tabs(book, worksheets: dict[str, Any]) -> list[str]:
     """Remove legacy qualification/review tabs from the published workbook."""
-    retired = ("Qualified Handoff", "Failed Watchlist", "Research Candidates", "Current Evidence")
+    retired = ("Qualified Handoff", "Failed Watchlist", "Research Candidates", "Current Evidence", "Secondary Model Registry")
     deleted = []
     for title in retired:
         worksheet = worksheets.get(title)
@@ -266,9 +266,9 @@ def short_process_audit_values(
         ])
         rank = pd.to_numeric(pd.Series([item.get("short_rank")]), errors="coerce").iloc[0]
         if pd.notna(rank):
-            data_status = "Rankable four-year score"
+            data_status = "Rankable score"
         elif pd.to_numeric(pd.Series([item.get("history_years")]), errors="coerce").iloc[0] < 4:
-            data_status = "Insufficient annual history"
+            data_status = "Limited annual history (review regime)"
         elif pd.to_numeric(pd.Series([item.get("source_error_count")]), errors="coerce").iloc[0] > 0:
             data_status = "Source error recorded"
         else:
@@ -535,12 +535,10 @@ def control_rows(controls: dict[str, Any]) -> list[list[Any]]:
         "MIN_FAMILY_METRIC_COVERAGE": "Minimum valid metric-weight coverage required to admit a family.",
         "MIN_CROSS_SECTION_OBSERVATIONS": "Minimum valid stocks required to score one metric.",
         "CROSS_SECTION_SHRINKAGE_STRENGTH": "Peer scores are shrunk toward neutral by n/(n+strength), reducing false precision in sparse metrics.",
-        "SECTOR_PEER_WEIGHT": "Maximum blend weight on reliability-weighted within-sector scoring; the remainder stays category-relative.",
-        "MIN_SECTOR_PEER_OBSERVATIONS": "Minimum valid observations required before a sector can influence one metric.",
-        "SECTOR_PEER_SHRINKAGE_STRENGTH": "Shrinkage strength applied to small within-sector metric samples.",
         "MIN_TREND_OBSERVATIONS": "Minimum four unique annual observations required for a regression-style trend; fewer observations remain NO DATA.",
-        "MISSING_TREND_PENALTY_POINTS": "Maximum points deducted when the TREND family has no valid metrics; partial trend coverage receives a proportional deduction.",
-        "NO_USABLE_TREND_EXTRA_PENALTY_POINTS": "Additional deduction when effective trend reliability is exactly zero, preventing non-trend candidates from ranking as trend-backed winners.",
+        "TREND_RECENCY_DECAY": "Exponential diffusion applied to Secondary trend statistics: newest fiscal observation has weight 1; each older observation is multiplied by this value.",
+        "MISSING_TREND_PENALTY_POINTS": "Deprecated compatibility control. Missing data is disclosed through LIMITED_DATA and never deducts score points.",
+        "NO_USABLE_TREND_EXTRA_PENALTY_POINTS": "Deprecated compatibility control. Missing data is disclosed through LIMITED_DATA and never deducts score points.",
         "THREE_YEAR_TREND_RELIABILITY": "Reliability multiplier for a trend based on three rather than four unique fiscal years.",
         "TREND_FIT_RELIABILITY_FLOOR": "Minimum fit multiplier; R-squared scales the remainder so noisy trends have less authority without being discarded.",
         "PERCENTILE_WEIGHT": "Blend weight on cross-sectional percentile; remainder is capped robust-z.",
@@ -574,13 +572,13 @@ def control_rows(controls: dict[str, Any]) -> list[list[Any]]:
         "SHORT_MIN_WEIGHT_COVERAGE": "Minimum total short model family-weight coverage for qualification.",
         "SHORT_MIN_TREND_RELIABILITY": "Minimum history- and fit-weighted short trend reliability.",
         "SHORT_MIN_DIRECTION_OBSERVATIONS": "Minimum available adverse direction checks among multi-year or recent measures (maximum six, the number of recent measures).",
-        "SHORT_MAX_POSITIVE_REVENUE_GROWTH_SHARE": "A four-year revenue-growth share below this cutoff counts as adverse; 0.50 means positive growth occurred in fewer than half of observed annual changes.",
-        "SHORT_MIN_ADVERSE_TREND_BREADTH": "Minimum share of observed four-year trends moving adversely.",
+        "SHORT_MAX_POSITIVE_REVENUE_GROWTH_SHARE": "A revenue-growth share below this cutoff counts as adverse; 0.50 means positive growth occurred in fewer than half of observed annual changes.",
+        "SHORT_MIN_ADVERSE_TREND_BREADTH": "Minimum share of observed recency-weighted trends moving adversely.",
         "SHORT_MIN_ADVERSE_RECENT_BREADTH": "Minimum share of observed latest-year changes moving adversely.",
         "SHORT_MIN_WEAK_FUNDAMENTAL_DOMAINS": "Require independent weak operating, cash-flow and balance-sheet evidence domains.",
-        "SHORT_TOP_N": "Maximum number of scored four-year Short research names displayed after the minimum data checks.",
+        "SHORT_TOP_N": "Maximum number of scored Short research names displayed after integrity checks.",
     }
-    rows: list[list[Any]] = [["CONTROL PANEL — EDIT VALUE COLUMN, THEN RERUN"], ["Source Data tabs are read-only; scores are ranked by the configured Top N after weights are renormalised over valid inputs and the explicit trend-data penalty is applied."], ["Section", "Parameter", "Value", "Description"]]
+    rows: list[list[Any]] = [["CONTROL PANEL — EDIT VALUE COLUMN, THEN RERUN"], ["Source Data tabs are read-only; scores are ranked by the configured Top N after economic groups are aggregated and weights are renormalised over observed inputs. Missing data is a LIMITED_DATA regime, not a score penalty."], ["Section", "Parameter", "Value", "Description"]]
     hidden_gate_controls = {
         "MIN_OVERALL_WEIGHT_COVERAGE", "STRONG_FAMILY_SCORE", "MIN_LEAVE_ONE_FAMILY_OUT_SCORE",
         "MAX_FISCAL_YEAR_LAG", "MAX_FINANCIAL_AGE_DAYS", "MIN_RECENT_DIRECTION_OBSERVATIONS",
@@ -629,7 +627,8 @@ def control_rows(controls: dict[str, Any]) -> list[list[Any]]:
             rows.append([f"{category} family weight", key, controls[key], "Relative family weight; 0 disables the family."])
         for metric, (family, direction, description) in config.FEATURE_SPECS.items():
             key = f"METRIC_WEIGHT_{slug}_{metric.upper()}"
-            rows.append([f"{category} metric weight", key, controls[key], f"{family}; {direction} is better; {description}."])
+        group = config.METRIC_GROUPS.get(metric, metric)
+        rows.append([f"{category} metric weight", key, controls[key], f"{family} / economic group {group}; {direction} is better; {description}."])
     short_metrics = sorted({metric for family in SHORT_METRICS.values() for metric in family})
     short_metric_directions = {
         metric: direction
@@ -639,12 +638,12 @@ def control_rows(controls: dict[str, Any]) -> list[list[Any]]:
     for metric in short_metrics:
         key = f"SHORT_METRIC_WEIGHT_{metric.upper()}"
         direction_text = "lower raw values rank higher for the Short score" if short_metric_directions[metric] == "lower" else "higher raw values rank higher for the Short score"
-        rows.append(["Short metric weight", key, controls[key], f"Relative weight; {direction_text}, as shown in Secondary Model Registry; zero disables it."])
-    rows += [["Interpretation", "Missing data", "Renormalised", "Missing values are never converted to zero; score coverage and reliability remain visible in analysis."],
-             ["Interpretation", "Short input", "Primary Short tab", "Only tickers currently selected on the primary workbook Short tab enter the secondary Short screen. Four-year history is required; primary Short score, four- and twelve-week price changes and estimate revisions are point-in-time inputs."],
+        rows.append(["Short metric weight", key, controls[key], f"Relative weight; {direction_text}, as shown in Secondary Model & Data Registry; zero disables it."])
+    rows += [["Interpretation", "Missing data", "Limited-data regime", "Missing values are never converted to zero or deducted from the score. Coverage, recency, provenance and reconciliation are surfaced for qualitative review."],
+             ["Interpretation", "Short input", "Primary Short tab", "Only tickers currently selected on the primary workbook Short tab enter the secondary Short screen. Four-year history is preferred; shorter histories are explicitly LIMITED_DATA rather than scored as economic weakness."],
              ["Interpretation", "Primary Short freshness", "Unverified", "The imported primary Short table has no source as-of timestamp. Validate price/revision freshness before relying on the default 15% point-in-time Short family; borrow availability, cost and squeeze risk are not modeled."],
              ["Interpretation", "Ranking", "Separate cohorts", "Long scores compare within each current primary category shortlist; Short scores compare only the tickers on the live primary Short tab."],
-             ["Interpretation", "Output", "Top N scored", "Display the highest scored names with valid fiscal history and no source error."]]
+             ["Interpretation", "Output", "Top N scored", "Display the highest scored names without a source-integrity failure; limited disclosure is clearly flagged for analyst review."]]
     return rows
 
 
@@ -679,11 +678,12 @@ def write_outputs(
     shorts: pd.DataFrame, short_note: str = "", short_only: bool = False,
     short_analysis: pd.DataFrame | None = None, primary_shortlist: pd.DataFrame | None = None,
     short_as_of: str = "", short_data: pd.DataFrame | None = None,
+    source_audit: pd.DataFrame | None = None,
 ) -> list[str]:
     if short_analysis is None or primary_shortlist is None or short_data is None:
         raise ValueError("Short process output requires filtered fiscal data, the live primary shortlist and full secondary analysis")
     required_outputs = [
-        ("Secondary Model Registry", 220, 10), ("Short", 100, 195),
+        ("Secondary Model & Data Registry", 220, 12), ("Data Quality & Lineage", 250, 24), ("Short", 100, 195),
         ("Short Data", 100, 160), ("Short Analysis", 100, 180),
         ("Short Secondary Summary", 100, 40), ("Short Summary", 100, 50),
     ]
@@ -694,13 +694,13 @@ def write_outputs(
             worksheets[title] = book.add_worksheet(title=title, rows=rows, cols=cols)
     payloads: list[tuple[str, list[list[Any]]]] = [("Control Panel", control_rows(controls))]
     for category, cfg in config.CATEGORIES.items():
-        analysis_note = "AUDIT: latest four unique fiscal years → trend slopes and fit → metric/family point contributions → reliability penalty → final score; missing data remain NO DATA."
+        analysis_note = "AUDIT: available fiscal history → recency-diffused robust trend slopes and fit → metric/economic-group/family contributions → final score. Missing data remain a LIMITED_DATA review regime, not a score penalty."
         analysis_display = analyses[category].drop(columns=[
             column for column in analyses[category]
             if column in {"eligible", "gate_fail_reasons"} or column.endswith("_gate_pass")
         ])
         payloads.append((cfg["analysis_sheet"], frame_values(analysis_display, f"{category.upper()} — SECONDARY MULTI-YEAR AUDIT", analysis_note)))
-        summary_note = "Top score-ranked research candidates, up to the configured cap, among valid four-year source histories. Research ranking does not verify Primary timing, current TTM or trading suitability."
+        summary_note = "Top score-ranked research candidates, up to the configured cap, among finite scores without source-integrity failure. LIMITED_DATA is surfaced for review. Research ranking does not verify Primary timing, current TTM or trading suitability."
         payloads.append((cfg["secondary_summary_sheet"], frame_values(summaries[category], f"{category.upper()} — SECONDARY SCREEN", summary_note)))
     source_tabs = ", ".join(cfg["data_sheet"] for cfg in config.CATEGORIES.values())
     history_candidates = int(short_data["Ticker"].nunique()) if "Ticker" in short_data else 0
@@ -713,19 +713,23 @@ def write_outputs(
     audit_values = short_process_audit_values(primary_shortlist, short_analysis, shorts, controls)
     audit_frame = pd.DataFrame(audit_values[1:], columns=audit_values[0])
     analysis_note = (
-        "Every primary Short candidate is shown with its point-in-time primary signals, fiscal history, four-year trend inputs, "
-        "family contributions, coverage, data status and final score. Missing history is shown as NO DATA."
+        "Every primary Short candidate is shown with its point-in-time primary signals, fiscal history, recency-diffused trend inputs, "
+        "economic-group/family contributions, coverage, data regime and final score. Missing history is shown as LIMITED_DATA, not as economic weakness."
     )
     summary_note = (
-        f"{short_note} This sheet ranks scored four-year Short candidates; display does not assess trade readiness."
+        f"{short_note} This sheet ranks scored Short candidates; display does not assess trade readiness."
     )
     payloads.extend([
         ("Short Data", frame_values(short_data, "SHORT — FILTERED ANNUAL SOURCE DATA", data_note)),
         ("Short Analysis", frame_values(audit_frame, "SHORT — SECONDARY FOUR-YEAR ANALYSIS", analysis_note)),
         ("Short Secondary Summary", frame_values(shorts, "SHORT — SECONDARY SUMMARY", summary_note)),
     ])
-    payloads.append(("Secondary Model Registry", frame_values(
-        registry, "SECONDARY MODEL REGISTRY", "Every scored metric, economic direction, family and live Control Panel weight."
+    payloads.append(("Secondary Model & Data Registry", frame_values(
+        registry, "SECONDARY MODEL & DATA REGISTRY", "Every scored metric, economic group, direction, family and live Control Panel weight."
+    )))
+    payloads.append(("Data Quality & Lineage", frame_values(
+        source_audit if source_audit is not None else pd.DataFrame(), "DATA QUALITY & LINEAGE",
+        "Statement completeness, temporal coverage, reconciliation, market-data alignment and provenance. LIMITED_DATA is a review regime, not an adverse score."
     )))
     payloads.append(("Secondary Run Audit", frame_values(
         run_audit, "SECONDARY RUN AUDIT", "Run-level data quality, coverage, selection and exact contribution reconciliation evidence."
@@ -733,7 +737,7 @@ def write_outputs(
 
     if short_only:
         payloads = [item for item in payloads if item[0] in {
-            "Control Panel", "Secondary Model Registry", "Short Data", "Short Analysis", "Short Secondary Summary",
+            "Control Panel", "Secondary Model & Data Registry", "Data Quality & Lineage", "Short Data", "Short Analysis", "Short Secondary Summary",
         }]
     clear_ranges = [
         f"'{title.replace(chr(39), chr(39)*2)}'!A1:{rowcol_to_a1(worksheets[title].row_count, worksheets[title].col_count)}"
@@ -808,7 +812,6 @@ def write_outputs(
                 "MIN_SELECTION_WEIGHT_COVERAGE_TURNAROUND_STORY", "MIN_EFFECTIVE_TREND_RELIABILITY_SAFE",
                 "MIN_EFFECTIVE_TREND_RELIABILITY_HIGH_GROWTH_POTENTIAL", "MIN_EFFECTIVE_TREND_RELIABILITY_TURNAROUND_STORY",
                 "SAFE_MIN_POSITIVE_HISTORY_SHARE", "TURNAROUND_MIN_FAVOURABLE_TREND_BREADTH",
-                "SECTOR_PEER_WEIGHT",
             }
             percentages.update({"MIN_RECENT_FAVOURABLE_BREADTH", "MIN_FAVOURABLE_TREND_BREADTH", "MIN_RECENT_METRIC_COVERAGE", "SHORT_MIN_TREND_COVERAGE", "SHORT_MIN_POINT_IN_TIME_COVERAGE", "SHORT_MIN_WEIGHT_COVERAGE", "SHORT_MIN_TREND_RELIABILITY", "SHORT_MIN_ADVERSE_TREND_BREADTH", "SHORT_MIN_ADVERSE_RECENT_BREADTH", "SHORT_MAX_POSITIVE_REVENUE_GROWTH_SHARE"})
             boolean_keys = {key for key, value in controls.items() if isinstance(value, bool)}
@@ -817,7 +820,6 @@ def write_outputs(
             nonnegative_keys = {
                 "CROSS_SECTION_SHRINKAGE_STRENGTH", "STRONG_FAMILY_SCORE",
                 "MIN_LEAVE_ONE_FAMILY_OUT_SCORE", "MAX_FISCAL_YEAR_LAG",
-                "SECTOR_PEER_SHRINKAGE_STRENGTH",
             }
             for row_index, row in enumerate(values[3:], start=3):
                 key = str(row[1]) if len(row) > 1 else ""

@@ -14,15 +14,15 @@ Each list displays the highest-scoring names up to its editable cap in `Control 
 - `TOP_N_TURNAROUND_STORY`
 - `SHORT_TOP_N`
 
-The default cap is three. A name needs a finite score, four usable annual observations and no recorded source error to be comparable for ranking. The cap controls how many comparable names are displayed; it does not turn the list into a trade recommendation.
+The default cap is three. A name needs a finite score and no source-integrity failure to be comparable for ranking. Shorter or incomplete histories are explicitly labelled `LIMITED_DATA` for analyst review rather than scored as economic weakness. The cap controls how many comparable names are displayed; it does not turn the list into a trade recommendation.
 
 ## Workbook tabs
 
-The four `Secondary Summary` tabs are the selection surface. The `Data` tabs preserve the annual source rows, the `Analysis` tabs expose the inputs and score calculation, `Secondary Model Registry` records the active weights and metric directions, and `Secondary Run Audit` records run-level coverage and reconciliation checks. `Short` and `Short Summary` retain the imported Primary Short source and its dashboard. Primary source tabs remain read-only.
+The four `Secondary Summary` tabs are the selection surface. The `Data` tabs preserve the annual source rows, the `Analysis` tabs expose the inputs and score calculation, `Secondary Model & Data Registry` records active weights, economic groups and directions, `Data Quality & Lineage` records statement completeness, provenance, reconciliation and market-data alignment, and `Secondary Run Audit` records run-level checks. `Short` and `Short Summary` retain the imported Primary Short source and its dashboard. Primary source tabs remain read-only.
 
 The Short list uses the current Primary Short candidates plus the four price and estimate-change fields reconciled from the Primary `Dataset`. Its source date is currently unverified, so borrow, liquidity, event and timing checks still require separate review.
 
-The model uses score contributions from metric families, multi-year trend features, recent inflection features and explicit missing-data penalties. Missing values remain `NO DATA`; available weights are renormalised only when the required data checks pass. The workbook exposes the resulting score, coverage, reliability and data status for every candidate without publishing a second selection queue.
+The model uses grouped metric contributions, recency-diffused multi-year trend features and recent inflection features. Correlated metrics are aggregated into economic groups before family scoring, so one driver cannot gain influence merely by appearing in several ratios. Missing values remain `NO DATA`; available weights are renormalised and missingness is published as `LIMITED_DATA`, never as a score penalty. The workbook exposes score, coverage, reliability, data regime, provenance and reconciliation status for every candidate without publishing a second selection queue.
 
 Historical point-in-time reconstruction and out-of-sample validation are not available from the current source data. Current or restated SEC data should therefore be treated as a live research snapshot, not as a historical performance test.
 
@@ -49,4 +49,4 @@ Provide the existing service-account path with `--credentials-file` when require
 
 ## Controls
 
-Edit the `Value` column in `Control Panel`, then rerun the program. The four display caps are the `TOP_N_*` controls above. Family weights, metric weights, trend-history requirements, coverage requirements and missing-data penalties remain available because they change the score itself or determine whether a score can be compared. Source `Data` tabs should not be edited manually.
+Edit the `Value` column in `Control Panel`, then rerun the program. The four display caps are the `TOP_N_*` controls above. Family weights, metric weights and `TREND_RECENCY_DECAY` remain editable. Data requirements set the published review regime; they do not penalise a score. Source `Data` tabs should not be edited manually.

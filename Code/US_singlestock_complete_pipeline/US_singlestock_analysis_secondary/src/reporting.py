@@ -17,6 +17,7 @@ def build_model_registry(controls: dict[str, Any]) -> pd.DataFrame:
             family_weight = float(controls[f"FAMILY_WEIGHT_{slug}_{family}"])
             rows.append({
                 "Category": category, "Metric": metric, "Family": family, "Direction": direction,
+                "Economic Group": config.METRIC_GROUPS.get(metric, metric),
                 "Description / Lineage": description, "Metric Weight": metric_weight,
                 "Family Weight": family_weight, "Active": metric_weight > 0 and family_weight > 0,
             })
@@ -31,6 +32,7 @@ def build_model_registry(controls: dict[str, Any]) -> pd.DataFrame:
                 "Four-year or latest fiscal snapshot; adverse direction explicitly inverted for short ranking."
             )
             rows.append({"Category": "Short", "Metric": metric, "Family": family.upper(),
+                         "Economic Group": config.SHORT_METRIC_GROUPS.get(metric, metric),
                          "Direction": f"{direction} supports Short",
                          "Description / Lineage": description,
                          "Metric Weight": metric_weight, "Family Weight": family_weight,
@@ -78,11 +80,14 @@ def build_run_audit(
             "Family Breadth Pass": int(table["family_breadth_gate_pass"].sum()),
             "Evidence Domain Breadth Pass": int(table["evidence_domain_breadth_gate_pass"].sum()),
             "Leave-One-Family-Out Pass": int(table["robustness_gate_pass"].sum()),
-            "Median Effective Sector Peer Weight": pd.to_numeric(table["effective_sector_peer_weight"], errors="coerce").median(),
+            "Secondary Peer Universe": table.get("secondary_peer_universe", pd.Series("CURRENT_SHORTLIST")).iloc[0],
+            "Secondary Sector Blending": "DISABLED — shortlisted-universe peers only",
             "Median Weight Coverage": pd.to_numeric(table["overall_weight_coverage"], errors="coerce").median(),
             "Median Trend Metric Coverage": pd.to_numeric(table["TREND__metric_coverage"], errors="coerce").median(),
             "Median Effective Trend Reliability": pd.to_numeric(table["effective_trend_reliability"], errors="coerce").median(),
             "Median Reliability Penalty": pd.to_numeric(table["trend_data_penalty_points"], errors="coerce").median(),
+            "Limited Data": int(table.get("data_regime", pd.Series("LIMITED_DATA", index=table.index)).eq("LIMITED_DATA").sum()),
+            "Data Failures": int(table.get("data_regime", pd.Series("", index=table.index)).eq("DATA_FAILURE").sum()),
             "Max Score Reconciliation Error": reconciliation[category]["max_score_reconciliation_error"],
             "Max Trend Reconciliation Error": reconciliation[category]["max_trend_reconciliation_error"],
         })
@@ -96,9 +101,8 @@ def build_run_audit(
         return pd.to_numeric(short_column(name), errors="coerce").median()
 
     raw_score = pd.to_numeric(short_column("short_raw_score"), errors="coerce")
-    reliability = pd.to_numeric(short_column("short_trend_reliability"), errors="coerce")
     score = pd.to_numeric(short_column("short_score"), errors="coerce")
-    score_error = (score - (50 + (raw_score - 50) * reliability)).abs()
+    score_error = (score - raw_score).abs()
     rows.append({
         "Generated At": generated,
         "Model Version": controls["MODEL_VERSION"],

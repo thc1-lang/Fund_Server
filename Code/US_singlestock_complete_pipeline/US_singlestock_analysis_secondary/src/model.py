@@ -22,7 +22,7 @@ NUMERIC_SOURCE_COLUMNS = [
 REQUIRED_SOURCE_COLUMNS = {
     "Ticker", "Fiscal Year", "Fiscal Period End", "Revenue", "Net Income", "EBIT", "EBITDA",
     "Interest Coverage Ratio", "Operating Cash Flow", "Free Cash Flow", "Market Cap", "Cash",
-    "Total Debt", "Free Cash Flow Yield", "Current Ratio", "Quick Ratio",
+    "Total Debt", "Total Assets", "Shareholders Equity", "Free Cash Flow Yield", "Current Ratio", "Quick Ratio",
     "Return on Assets Ratio", "Return on Equity Ratio", "EV / EBIT", "EV / EBITDA",
     "Gross Margin", "Net Margin", "Debt to Equity Ratio", "Price / Free Cash Flow Per Share",
     "Working Capital to Total Assets Ratio", "Sales to Assets Ratio", "Pre-Tax Profit Ratio",
@@ -81,7 +81,14 @@ def _cagr(values: pd.Series, years: pd.Series) -> float:
     return float((last / first) ** (1 / elapsed) - 1)
 
 
-def _trend_stats(values: pd.Series, years: pd.Series, minimum: int = 3, log_values: bool = False) -> tuple[float, float, int]:
+def _weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
+    order = np.argsort(values)
+    ordered, ordered_weights = values[order], weights[order]
+    return float(ordered[np.searchsorted(np.cumsum(ordered_weights), ordered_weights.sum() / 2, side="left")])
+
+
+def _trend_stats(values: pd.Series, years: pd.Series, minimum: int = 3, log_values: bool = False,
+                 recency_decay: float = 1.0) -> tuple[float, float, int]:
     valid = pd.DataFrame({"v": pd.to_numeric(values, errors="coerce"), "y": pd.to_numeric(years, errors="coerce")}).dropna()
     if log_values:
         valid = valid.loc[valid["v"].gt(0)].copy()
@@ -90,22 +97,34 @@ def _trend_stats(values: pd.Series, years: pd.Series, minimum: int = 3, log_valu
         return np.nan, np.nan, int(len(valid))
     x = valid["y"].to_numpy(dtype=float)
     y = valid["v"].to_numpy(dtype=float)
-    # Theil-Sen median slope is materially less sensitive than OLS to one
-    # unusual fiscal year, which matters when only three or four points exist.
-    slopes = [(y[j] - y[i]) / (x[j] - x[i]) for i in range(len(x)) for j in range(i + 1, len(x)) if x[j] != x[i]]
+    # Recency-diffused Theil-Sen keeps the prior robust estimator while giving
+    # newer disclosed fundamentals more influence. Pair weights are the product
+    # of their time weights, so one old observation cannot dominate momentum.
+    decay = float(recency_decay)
+    if not 0 < decay <= 1:
+        raise ValueError("TREND_RECENCY_DECAY must be in (0, 1]")
+    weights = np.power(decay, x.max() - x)
+    slopes, slope_weights = [], []
+    for i in range(len(x)):
+        for j in range(i + 1, len(x)):
+            if x[j] != x[i]:
+                slopes.append((y[j] - y[i]) / (x[j] - x[i]))
+                slope_weights.append(weights[i] * weights[j])
     if not slopes:
         return np.nan, np.nan, int(len(valid))
-    slope = float(np.median(slopes))
-    intercept = float(np.median(y - slope * x))
+    slope = _weighted_median(np.asarray(slopes), np.asarray(slope_weights))
+    intercept = _weighted_median(y - slope * x, weights)
     fitted = intercept + slope * x
-    total = float(np.sum((y - y.mean()) ** 2))
-    residual = float(np.sum((y - fitted) ** 2))
+    weighted_mean = float(np.average(y, weights=weights))
+    total = float(np.sum(weights * (y - weighted_mean) ** 2))
+    residual = float(np.sum(weights * (y - fitted) ** 2))
     r_squared = 1.0 if total == 0 and residual == 0 else (1 - residual / total if total > 0 else np.nan)
     return (float(np.expm1(slope)) if log_values else slope), float(np.clip(r_squared, 0, 1)), int(len(valid))
 
 
-def _linear_trend(values: pd.Series, years: pd.Series, minimum: int = 3, log_values: bool = False) -> float:
-    return _trend_stats(values, years, minimum, log_values)[0]
+def _linear_trend(values: pd.Series, years: pd.Series, minimum: int = 3, log_values: bool = False,
+                  recency_decay: float = 1.0) -> float:
+    return _trend_stats(values, years, minimum, log_values, recency_decay)[0]
 
 
 def _direction_breadth(trends: list[tuple[float, str]]) -> float:
@@ -133,7 +152,8 @@ def _history_trace(years: pd.Series, values: pd.Series, percent: bool = False) -
     return " | ".join(pairs)
 
 
-def build_features(raw: pd.DataFrame, min_trend_observations: int = 4) -> pd.DataFrame:
+def build_features(raw: pd.DataFrame, min_trend_observations: int = 4,
+                   trend_recency_decay: float | None = None) -> pd.DataFrame:
     missing = sorted(REQUIRED_SOURCE_COLUMNS - set(raw.columns))
     if missing:
         raise ValueError(f"Source data is missing required columns: {missing}")
@@ -152,6 +172,9 @@ def build_features(raw: pd.DataFrame, min_trend_observations: int = 4) -> pd.Dat
     # Fiscal year is authoritative. Missing period dates must not sort after a
     # newer fiscal year and accidentally become the "latest" observation.
     frame = frame.sort_values(["Ticker", "Fiscal Year", "_period"], kind="stable", na_position="first")
+    trend_recency_decay = float(
+        config.GENERAL_DEFAULTS["TREND_RECENCY_DECAY"] if trend_recency_decay is None else trend_recency_decay
+    )
     rows: list[dict[str, Any]] = []
     for ticker, group in frame.groupby("Ticker", sort=True):
         usable = group.loc[group["Fiscal Year"].notna()].copy()
@@ -170,14 +193,14 @@ def build_features(raw: pd.DataFrame, min_trend_observations: int = 4) -> pd.Dat
         fcf_margin = (usable["Free Cash Flow"] / revenue).where(revenue.gt(0))
         ebit_margin = (usable["EBIT"] / revenue).where(revenue.gt(0))
         trend_inputs = {
-            "revenue": _trend_stats(revenue, usable["Fiscal Year"], min_trend_observations, log_values=True),
-            "net_margin": _trend_stats(net_margin, usable["Fiscal Year"], min_trend_observations),
-            "fcf_margin": _trend_stats(fcf_margin, usable["Fiscal Year"], min_trend_observations),
-            "roa": _trend_stats(usable["Return on Assets Ratio"], usable["Fiscal Year"], min_trend_observations),
-            "gross_margin": _trend_stats(usable["Gross Margin"], usable["Fiscal Year"], min_trend_observations),
+            "revenue": _trend_stats(revenue, usable["Fiscal Year"], min_trend_observations, log_values=True, recency_decay=trend_recency_decay),
+            "net_margin": _trend_stats(net_margin, usable["Fiscal Year"], min_trend_observations, recency_decay=trend_recency_decay),
+            "fcf_margin": _trend_stats(fcf_margin, usable["Fiscal Year"], min_trend_observations, recency_decay=trend_recency_decay),
+            "roa": _trend_stats(usable["Return on Assets Ratio"], usable["Fiscal Year"], min_trend_observations, recency_decay=trend_recency_decay),
+            "gross_margin": _trend_stats(usable["Gross Margin"], usable["Fiscal Year"], min_trend_observations, recency_decay=trend_recency_decay),
             "debt_to_equity": _trend_stats(
                 usable["Debt to Equity Ratio"].where(usable["Debt to Equity Ratio"].ge(0)),
-                usable["Fiscal Year"], min_trend_observations,
+                usable["Fiscal Year"], min_trend_observations, recency_decay=trend_recency_decay,
             ),
         }
         recent_directions = [
@@ -212,6 +235,7 @@ def build_features(raw: pd.DataFrame, min_trend_observations: int = 4) -> pd.Dat
             "source_error_count": int(source_errors.ne("").sum()),
             "trend_observations": int(len(usable)),
             "trend_year_span": int(usable["Fiscal Year"].max() - usable["Fiscal Year"].min()) if len(usable) > 1 else 0,
+            "trend_recency_decay": trend_recency_decay,
             "max_fiscal_year_gap": int(pd.to_numeric(usable["Fiscal Year"], errors="coerce").sort_values().diff().max()) if len(usable) > 1 else 0,
             "four_year_fiscal_years": " | ".join(str(int(y)) for y in usable["Fiscal Year"] if np.isfinite(y)),
             "four_year_revenue_history": _history_trace(usable["Fiscal Year"], revenue),
@@ -337,45 +361,16 @@ def _base_cross_section_score(
     return 50 + (raw_score - 50) * reliability
 
 
-def _cross_section_score(
-    series: pd.Series, direction: str, controls: dict[str, Any], peer_groups: pd.Series | None = None,
-) -> dict[str, pd.Series]:
+def _cross_section_score(series: pd.Series, direction: str, controls: dict[str, Any]) -> dict[str, pd.Series]:
     robust_z_cap = float(controls["ROBUST_Z_CAP"])
     percentile_weight = float(controls["PERCENTILE_WEIGHT"])
     category_score = _base_cross_section_score(
         series, direction, int(controls["MIN_CROSS_SECTION_OBSERVATIONS"]),
         float(controls["CROSS_SECTION_SHRINKAGE_STRENGTH"]), robust_z_cap, percentile_weight,
     )
-    sector_score = pd.Series(np.nan, index=series.index, dtype=float)
-    sector_observations = pd.Series(0, index=series.index, dtype=int)
-    sector_blend_weight = pd.Series(0.0, index=series.index, dtype=float)
-    if peer_groups is not None:
-        groups = peer_groups.fillna("").astype(str).str.strip()
-        numeric = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan)
-        for label in groups.loc[groups.ne("")].unique():
-            index = groups.index[groups.eq(label)]
-            count = int(numeric.loc[index].notna().sum())
-            sector_observations.loc[index] = count
-            scored = _base_cross_section_score(
-                numeric.loc[index], direction, int(controls["MIN_SECTOR_PEER_OBSERVATIONS"]),
-                float(controls["SECTOR_PEER_SHRINKAGE_STRENGTH"]), robust_z_cap, percentile_weight,
-            )
-            sector_score.loc[index] = scored
-            if count >= int(controls["MIN_SECTOR_PEER_OBSERVATIONS"]):
-                reliability = count / (count + float(controls["SECTOR_PEER_SHRINKAGE_STRENGTH"]))
-                sector_blend_weight.loc[index] = float(controls["SECTOR_PEER_WEIGHT"]) * reliability
-    combined = category_score.copy()
-    usable = category_score.notna() & sector_score.notna()
-    combined.loc[usable] = (
-        category_score.loc[usable] * (1 - sector_blend_weight.loc[usable])
-        + sector_score.loc[usable] * sector_blend_weight.loc[usable]
-    )
     return {
-        "score": combined,
+        "score": category_score,
         "category_score": category_score,
-        "sector_score": sector_score,
-        "sector_peer_observations": sector_observations,
-        "sector_blend_weight": sector_blend_weight,
     }
 
 
@@ -390,7 +385,8 @@ def _primary_metadata(metadata: pd.DataFrame) -> pd.DataFrame:
     keep = [c for c in (
         "Ticker", "Company Name", "Market Cap (mil)", "Industry", "Sector", "Exchange", "COM/ADR/Canadian",
         "Universe Rank", "Final Strategy Score", "PIT Verification Status",
-        "Latest Verified Information Availability Date",
+        "Latest Verified Information Availability Date", "Data Regime", "Data Regime Reasons",
+        "Financial Statement Coverage", "Source Verification", "Primary Source As Of",
     ) if c in metadata]
     meta = metadata[keep].copy()
     meta["Ticker"] = meta["Ticker"].astype(str).str.strip().str.upper()
@@ -399,6 +395,10 @@ def _primary_metadata(metadata: pd.DataFrame) -> pd.DataFrame:
         "Final Strategy Score": "Primary Final Strategy Score",
         "PIT Verification Status": "Primary PIT Verification Status",
         "Latest Verified Information Availability Date": "Primary Latest Verified Availability Date",
+        "Data Regime": "Primary Data Regime",
+        "Data Regime Reasons": "Primary Data Regime Reasons",
+        "Financial Statement Coverage": "Primary Financial Statement Coverage",
+        "Source Verification": "Primary Source Verification",
     })
 
 
@@ -408,7 +408,9 @@ def append_missing_primary(table: pd.DataFrame, metadata: pd.DataFrame, as_of: s
     missing = meta.loc[~meta["Ticker"].isin(table["Ticker"])].copy()
     if missing.empty:
         return table
-    rows = pd.DataFrame(index=missing.index, columns=table.columns)
+    # Preserve the established audit dtypes for explicit missing-source rows;
+    # constructing an all-object/all-NA frame triggers pandas concat coercion.
+    rows = table.iloc[0:0].reindex(missing.index).copy()
     for column in missing:
         if column in rows:
             rows[column] = missing[column]
@@ -433,7 +435,9 @@ def score_category(features: pd.DataFrame, metadata: pd.DataFrame, category: str
     family_weights, metric_weights = _control_weights(category, controls)
     metric_audit: dict[str, Any] = {}
     for metric, (family, direction, _) in config.FEATURE_SPECS.items():
-        components = _cross_section_score(table[metric], direction, controls, table.get("Sector"))
+        # Secondary compares only the current Primary shortlist for this
+        # strategy. Sector-relative peer construction belongs to Primary.
+        components = _cross_section_score(table[metric], direction, controls)
         for name, values in components.items():
             metric_audit[f"{metric}__{name}"] = values
         metric_audit[f"{metric}__weight"] = metric_weights[metric]
@@ -442,30 +446,57 @@ def score_category(features: pd.DataFrame, metadata: pd.DataFrame, category: str
 
     active_metrics = [metric for metric, weight in metric_weights.items() if weight > 0 and family_weights[config.FEATURE_SPECS[metric][0]] > 0]
     valid_metric_weight = sum(table[f"{metric}__score"].notna().astype(float) * metric_weights[metric] for metric in active_metrics)
-    sector_weighted = sum(
-        table[f"{metric}__sector_blend_weight"] * table[f"{metric}__score"].notna().astype(float) * metric_weights[metric]
-        for metric in active_metrics
-    )
-    table["effective_sector_peer_weight"] = sector_weighted / valid_metric_weight.replace(0, np.nan)
+    table["secondary_peer_universe"] = f"CURRENT_PRIMARY_{config.CATEGORIES[category]['slug']}_SHORTLIST"
 
     # Defragment after constructing the wide metric audit block; the live tables are
     # intentionally wide because every input, score, weight and contribution is visible.
     table = table.copy()
     for family in config.FAMILY_WEIGHTS[category]:
+        # Compact between wide family audit blocks to keep publication-scale
+        # screening free of pandas fragmentation warnings.
+        table = table.copy()
         metrics = [m for m, (f, _, _) in config.FEATURE_SPECS.items() if f == family and metric_weights[m] > 0]
-        configured = sum(metric_weights[m] for m in metrics)
-        valid_weight = sum(table[f"{m}__score"].notna().astype(float) * metric_weights[m] for m in metrics) if metrics else pd.Series(0.0, index=table.index)
-        numerator = sum(table[f"{m}__score"].fillna(0) * metric_weights[m] for m in metrics) if metrics else pd.Series(0.0, index=table.index)
+        grouped: dict[str, list[str]] = {}
+        for metric in metrics:
+            grouped.setdefault(config.METRIC_GROUPS.get(metric, metric), []).append(metric)
+        group_scores, group_available, group_weights = {}, {}, {}
+        for group, members in grouped.items():
+            configured_metric_weight = sum(metric_weights[m] for m in members)
+            available_metric_weight = sum(
+                table[f"{m}__score"].notna().astype(float) * metric_weights[m] for m in members
+            )
+            numerator = sum(table[f"{m}__score"].fillna(0) * metric_weights[m] for m in members)
+            group_coverage = available_metric_weight / configured_metric_weight if configured_metric_weight else pd.Series(np.nan, index=table.index)
+            group_score = numerator / available_metric_weight.replace(0, np.nan)
+            # A group is one economic exposure, regardless of metric count.
+            group_weight = 1.0
+            table[f"{family} | {group} Group Score"] = group_score
+            table[f"{family} | {group} Group Coverage"] = group_coverage
+            table[f"{family} | {group} Group Weight"] = group_weight
+            group_scores[group] = group_score
+            group_usable = group_score.notna() & group_coverage.ge(float(controls["MIN_FAMILY_METRIC_COVERAGE"]))
+            group_available[group] = group_usable.astype(float) * group_weight
+            group_weights[group] = group_weight
+            for metric in members:
+                within_group = metric_weights[metric] / configured_metric_weight if configured_metric_weight else 0.0
+                table[f"{metric}__family_contribution_points"] = group_score * within_group * group_weight
+        configured = sum(group_weights.values())
+        valid_weight = sum(group_available.values()) if group_available else pd.Series(0.0, index=table.index)
+        numerator = sum(group_scores[group].fillna(0) * group_weights[group] for group in group_scores) if group_scores else pd.Series(0.0, index=table.index)
         coverage = valid_weight / configured if configured > 0 else pd.Series(np.nan, index=table.index)
         score = (numerator / valid_weight.replace(0, np.nan)).where(coverage.ge(float(controls["MIN_FAMILY_METRIC_COVERAGE"])))
         table[f"{family}__metric_coverage"] = coverage
+        table[f"{family}__independent_group_count"] = len(grouped)
         table[f"{family}__score"] = score
         table[f"{family}__weight"] = family_weights[family]
         table[f"{family}__weighted_numerator"] = score * family_weights[family]
-        for metric in metrics:
-            table[f"{metric}__family_contribution_points"] = (
-                (table[f"{metric}__score"] * metric_weights[metric] / valid_weight.replace(0, np.nan)).where(score.notna())
-            )
+        for group, members in grouped.items():
+            configured_metric_weight = sum(metric_weights[m] for m in members)
+            for metric in members:
+                within_group = metric_weights[metric] / configured_metric_weight if configured_metric_weight else 0.0
+                table[f"{metric}__family_contribution_points"] = (
+                    group_scores[group] * within_group * group_weights[group] / valid_weight.replace(0, np.nan)
+                ).where(score.notna() & group_available[group].astype(bool))
 
     table = table.copy()
     positive_family_total = sum(weight for weight in family_weights.values() if weight > 0)
@@ -503,15 +534,13 @@ def score_category(features: pd.DataFrame, metadata: pd.DataFrame, category: str
     table["effective_trend_reliability"] = (
         trend_coverage * table["trend_history_reliability"] * table["trend_fit_reliability"]
     ).clip(0, 1)
-    table["no_usable_trend_extra_penalty_points"] = table["effective_trend_reliability"].eq(0).astype(float) * float(
-        controls["NO_USABLE_TREND_EXTRA_PENALTY_POINTS"]
-    )
-    table["trend_data_penalty_points"] = (
-        (1 - table["effective_trend_reliability"]) * float(controls["MISSING_TREND_PENALTY_POINTS"])
-        + table["no_usable_trend_extra_penalty_points"]
-    )
-    table["TREND_DATA_PENALTY__contribution_points"] = -table["trend_data_penalty_points"]
-    table["final_score"] = table["raw_final_score"] + table["TREND_DATA_PENALTY__contribution_points"]
+    # Missing or short history is evidence-quality information, not adverse
+    # economic evidence. Scores are always re-normalised over what is present;
+    # the separate data regime below tells the analyst what still needs review.
+    table["no_usable_trend_extra_penalty_points"] = 0.0
+    table["trend_data_penalty_points"] = 0.0
+    table["TREND_DATA_PENALTY__contribution_points"] = 0.0
+    table["final_score"] = table["raw_final_score"]
 
     active_families = [family for family, weight in family_weights.items() if weight > 0]
     table["strong_family_count"] = sum(
@@ -534,7 +563,6 @@ def score_category(features: pd.DataFrame, metadata: pd.DataFrame, category: str
         remaining_numerator = final_numerator - table[f"{family}__score"].fillna(0) * family_weights[family]
         leave_one_out.append(
             remaining_numerator / remaining_weight.replace(0, np.nan)
-            + table["TREND_DATA_PENALTY__contribution_points"]
         )
     table["leave_one_family_out_min_score"] = pd.concat(leave_one_out, axis=1).min(axis=1, skipna=True)
 
@@ -583,12 +611,20 @@ def score_category(features: pd.DataFrame, metadata: pd.DataFrame, category: str
         table["strategy_specific_gate_pass"] &= table["trend_direction_breadth"].ge(float(controls["TURNAROUND_MIN_FAVOURABLE_TREND_BREADTH"]))
     table["score_gate_pass"] = table["final_score"].ge(float(controls[f"MIN_SCORE_{slug}"]))
     table["quality_score_gate_pass"] = table["final_score"].ge(float(controls[f"MIN_SELECTION_SCORE_{slug}"]))
+    # Quality checks remain fully visible but do not turn incomplete disclosure
+    # into a negative score or an automatic economic rejection. Contradictory
+    # source records are still blocked later by the integrity gate.
+    data_checks = [
+        "history_gate_pass", "history_continuity_gate_pass", "freshness_gate_pass", "financial_age_gate_pass",
+        "recent_coverage_gate_pass", "coverage_gate_pass", "selection_coverage_gate_pass", "trend_reliability_gate_pass",
+    ]
+    table["data_regime"] = np.where(table[data_checks].all(axis=1), "STANDARD_DATA", "LIMITED_DATA")
+    table["data_regime_reasons"] = table.apply(
+        lambda r: "; ".join(c.removesuffix("_pass") for c in data_checks if not bool(r[c])), axis=1
+    )
     gate_cols = [
-        "history_gate_pass", "history_continuity_gate_pass", "freshness_gate_pass",
-        "financial_age_gate_pass", "absolute_trend_gate_pass", "recent_direction_gate_pass", "recent_coverage_gate_pass",
-        "coverage_gate_pass", "selection_coverage_gate_pass", "trend_reliability_gate_pass",
-        "family_breadth_gate_pass", "evidence_domain_breadth_gate_pass", "robustness_gate_pass", "source_error_gate_pass",
-        "strategy_specific_gate_pass", "score_gate_pass", "quality_score_gate_pass",
+        "source_error_gate_pass", "strategy_specific_gate_pass", "score_gate_pass",
+        "quality_score_gate_pass", "absolute_trend_gate_pass",
     ]
     table["eligible"] = table[gate_cols].all(axis=1)
     table["gate_fail_reasons"] = table.apply(lambda r: "; ".join(c.removesuffix("_pass") for c in gate_cols if not bool(r[c])), axis=1)
@@ -606,7 +642,8 @@ def ranked_long_candidates(table: pd.DataFrame) -> pd.DataFrame:
     history = pd.to_numeric(table.get("history_years", pd.Series(np.nan, index=table.index)), errors="coerce")
     gaps = pd.to_numeric(table.get("max_fiscal_year_gap", pd.Series(np.nan, index=table.index)), errors="coerce")
     source_errors = pd.to_numeric(table.get("source_error_count", pd.Series(np.nan, index=table.index)), errors="coerce")
-    valid &= history.ge(4) & gaps.le(int(config.GENERAL_DEFAULTS["MAX_FISCAL_YEAR_GAP"])) & source_errors.fillna(1).eq(0)
+    integrity = table.get("source_integrity_gate_pass", pd.Series(True, index=table.index)).fillna(False).astype(bool)
+    valid &= source_errors.fillna(1).eq(0) & integrity
     return table.loc[valid].sort_values(
         ["final_score", "effective_trend_reliability", "Ticker"],
         ascending=[False, False, True], kind="stable",
@@ -618,7 +655,7 @@ def build_summary(table: pd.DataFrame, category: str, controls: dict[str, Any]) 
     ranked = ranked_long_candidates(table)
     # Summary pages are score-ranked research lists.  Quality gates remain
     # visible for every displayed name, but do not suppress a valid, scored
-    # four-year history from the configured Top N display.
+    # available history from the configured Top N display.
     selected = ranked.head(int(controls[f"TOP_N_{slug}"])).reset_index(drop=True)
     out = pd.DataFrame()
     out["Rank"] = range(1, len(selected) + 1)
@@ -636,12 +673,15 @@ def build_summary(table: pd.DataFrame, category: str, controls: dict[str, Any]) 
     out["Leave-One-Family-Out Min Score"] = selected["leave_one_family_out_min_score"]
     out["Strong Family Count"] = selected["strong_family_count"]
     out["Strong Evidence Domain Count"] = selected["strong_evidence_domain_count"]
-    out["Effective Sector Peer Weight"] = selected["effective_sector_peer_weight"]
+    out["Shortlisted-Universe Peer Weight"] = 1.0
+    out["Secondary Peer Universe"] = selected["secondary_peer_universe"]
     for family, weight in _control_weights(category, controls)[0].items():
         if weight > 0:
             out[f"{family.replace('_', ' ').title()} Score"] = selected[f"{family}__score"]
             out[f"{family.replace('_', ' ').title()} Contribution"] = selected[f"{family}__contribution_points"]
     out["Weight Coverage"] = selected["overall_weight_coverage"]
+    out["Data Regime"] = selected.get("data_regime", "LIMITED_DATA")
+    out["Data Regime Reasons"] = selected.get("data_regime_reasons", "")
     out["Trend Metric Coverage"] = selected["TREND__metric_coverage"]
     out["Trend Fit R²"] = selected["trend_fit_r2_mean"]
     out["Effective Trend Reliability"] = selected["effective_trend_reliability"]
@@ -653,6 +693,7 @@ def build_summary(table: pd.DataFrame, category: str, controls: dict[str, Any]) 
     out["Favourable Trend Breadth"] = selected["trend_direction_breadth"]
     out["Trend Data Penalty"] = selected["TREND_DATA_PENALTY__contribution_points"]
     out["No-Usable-Trend Extra Penalty"] = -selected["no_usable_trend_extra_penalty_points"]
+    out["Trend Recency Decay"] = selected.get("trend_recency_decay", np.nan)
     out["History Years"] = selected["history_years"]
     out["Trend Observations"] = selected["trend_observations"]
     out["Latest Fiscal Year"] = selected["latest_fiscal_year"]
@@ -709,7 +750,7 @@ def _reason(row: pd.Series, category: str, controls: dict[str, Any], rank: int) 
     if np.isfinite(debt):
         financials.append(f"debt/equity {debt:.2f}")
     breadth = [item for item in (
-        percent("trend_direction_breadth", "favourable four-year trend breadth"),
+        percent("trend_direction_breadth", "favourable recency-weighted trend breadth"),
         percent("recent_favourable_breadth", "recent favourable breadth"),
     ) if item]
     penalty = _finite(row.get("trend_data_penalty_points"))
@@ -725,7 +766,7 @@ def _reason(row: pd.Series, category: str, controls: dict[str, Any], rank: int) 
     if np.isfinite(reliability):
         evidence.append(f"{reliability:.0%} effective trend reliability")
     if np.isfinite(penalty) and penalty > 0:
-        evidence.append(f"-{penalty:.1f} pts reliability penalty")
+        evidence.append(f"{penalty:.1f} pts legacy reliability diagnostic")
     robust = _finite(row.get("leave_one_family_out_min_score"))
     if np.isfinite(robust):
         evidence.append(f"{robust:.1f} minimum score after removing one family")

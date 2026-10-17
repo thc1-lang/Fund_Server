@@ -22,7 +22,7 @@ Specific industry classifications take precedence over broad sectors. Equity REI
 
 Derived accounting margins, generic cash-flow margin, unaligned forward-sales growth, PEG and EPS-growth acceleration remain auditable but do not contribute to scores while their definitions/periods are unresolved. Vendor operating and net margins remain scored together inside one group. EARNINGS_QUALITY is inactive because defined operating cash flow/accrual inputs are absent. Temporal and unsupported families have zero default weights. These changes are methodological, not fitted to returns.
 
-Coverage Confidence describes active data availability, not return probability or verified accounting quality. The internal `Score Confidence` column remains for compatibility. Zero-weight families cannot change composite coverage, and structural exclusions are distinguished from missing observations. Constant peer groups receive neutral scores; unknown dividends remain unknown; negative PEG is excluded. Optional positive-EPS and book-price controls now enforce their documented rules.
+Coverage Confidence describes active data availability, not return probability or verified accounting quality. The internal `Score Confidence` column remains for compatibility. Missing active inputs are weight-renormalised and published as a `LIMITED_DATA` regime for qualitative review; they are not score penalties or automatic economic rejections. The Primary audit separately reports vendor-snapshot verification, financial-statement/underwriting coverage, and market-cap/price alignment. Zero-weight families cannot change composite coverage, and structural exclusions are distinguished from missing observations. Constant peer groups receive neutral scores; unknown dividends remain unknown; negative PEG is excluded. Optional positive-EPS and book-price controls now enforce their documented rules.
 
 Each run saves a source snapshot and SHA-256 digest. For offline reproducibility:
 
@@ -112,8 +112,9 @@ run `.venv/bin/python main.py --live --short-only`. This mode preserves Dataset
 and the long outputs.
 
 Short uses the same source universe, peer factor definitions, missing-data
-treatment, confidence adjustment, `MIN_CANDIDATE_CONFIDENCE`, and per-industry
-limit as general Long. Its own `SHORT_WEIGHT_*` family mix and
+treatment, and per-industry limit as general Long. Coverage is disclosed as a
+`LIMITED_DATA` regime and does not adjust the score or veto a otherwise-scored
+name. Its own `SHORT_WEIGHT_*` family mix and
 `SHORT_MIN_WEAK_FAMILIES`/`SHORT_WEAK_FAMILY_SCORE` controls make it an independent
 current-state fragility and valuation screen. It does not reverse the separate
 Safe, High Growth Potential or Turnaround strategy overlays.

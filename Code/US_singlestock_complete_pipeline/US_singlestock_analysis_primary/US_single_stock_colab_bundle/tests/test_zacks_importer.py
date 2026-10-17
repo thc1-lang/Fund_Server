@@ -3,7 +3,23 @@ import csv
 import pytest
 
 from src.schema import REQUIRED_HEADERS
-from src.zacks_importer import read_and_validate_csv
+from src.zacks_importer import _manual_gate, read_and_validate_csv
+
+
+def test_normal_recaptcha_footer_is_not_a_manual_gate():
+    class Scope:
+        def __init__(self, text):
+            self.text = text
+
+        def locator(self, selector):
+            assert selector == "body"
+            return self
+
+        def inner_text(self, timeout):
+            return self.text
+
+    assert not _manual_gate(Scope("Stock Screener. This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply."))
+    assert _manual_gate(Scope("Please verify you are human to continue."))
 
 
 def write_csv(path, rows):

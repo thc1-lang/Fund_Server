@@ -57,18 +57,18 @@ def rank_quant_candidates(
     max_book_divergence: float | None = None,
 ) -> pd.DataFrame:
     out = df.copy()
-    sufficient = out["Data Status"].eq("SUFFICIENT")
-    short_sufficient = out.get("Short Data Status", out["Data Status"]).eq("SUFFICIENT")
+    sufficient = pd.to_numeric(out["Expanded Long Score"], errors="coerce").notna()
+    short_sufficient = pd.to_numeric(out["Expanded Short Score"], errors="coerce").notna()
     out["Expanded Long Rank"] = _rank_with_tiebreak(out, "Expanded Long Score", sufficient)
     out["Expanded Short Rank"] = _rank_with_tiebreak(out, "Expanded Short Score", short_sufficient)
     confidence = pd.to_numeric(
         out["Score Confidence"] if "Score Confidence" in out else pd.Series(100.0, index=out.index),
         errors="coerce",
     )
-    confident = confidence.ge(min_confidence)
+    confident = pd.Series(True, index=out.index)
     short_confidence_column = "Short Score Confidence" if "Short Score Confidence" in out else "Score Confidence"
     short_confidence = pd.to_numeric(out[short_confidence_column], errors="coerce") if short_confidence_column in out else confidence
-    short_confident = short_confidence.ge(min_confidence)
+    short_confident = pd.Series(True, index=out.index)
     def flag(name, default=True):
         return out.get(name, pd.Series(default, index=out.index)).fillna(False).astype(bool)
     long_trade, short_trade = flag("tradability_gate_pass"), flag("short_tradability_gate_pass")

@@ -83,7 +83,8 @@ def _manual_gate(scope: Any) -> bool:
         return False
     return any(phrase in text for phrase in (
         "pardon our interruption", "verify you are human", "checking your browser",
-        "complete the security check", "access denied", "unusual traffic", "captcha",
+        "complete the security check", "access denied", "unusual traffic",
+        "i'm not a robot", "select all images",
     ))
 
 

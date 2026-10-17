@@ -35,13 +35,14 @@ def test_no_extra_earnings_or_momentum_gates():
     assert score_shorts(x)['Short Selected'].sum()>0
 
 
-def test_cap_confidence_and_shared_data_veto():
+def test_score_coverage_is_flagged_not_a_selection_veto():
     try:
         config.apply_control_panel([['','SHORT_DISPLAY_TOP_N',2]])
         x=fixture();assert score_shorts(x)['Short Selected'].sum()==2
-        x['Score Confidence']=0;assert not score_shorts(x)['Short Selected'].any()
-        x['Score Confidence']=100;x['Data Status']='INSUFFICIENT DATA'
-        assert not score_shorts(x)['Short Selected'].any()
+        x['Score Confidence']=0
+        assert score_shorts(x)['Short Selected'].sum()==2
+        x['Score Confidence']=100;x['Data Status']='LIMITED DATA'
+        assert score_shorts(x)['Short Selected'].sum()==2
         config.apply_control_panel([['','SHORT_DISPLAY_TOP_N',0]])
         x=fixture();s=score_shorts(x)
         assert ['Display count is set to zero.'] in short_sheet_values(pd.concat([x,s],axis=1))

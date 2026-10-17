@@ -61,19 +61,37 @@ def score_shorts(features: pd.DataFrame, metadata: pd.DataFrame, controls: dict[
     for family, metrics in SHORT_METRICS.items():
         metric_weights = {name: float(controls[f"SHORT_METRIC_WEIGHT_{name.upper()}"]) for name in metrics}
         active = {name: direction for name, direction in metrics.items() if weights[family] > 0 and metric_weights[name] > 0}
-        scores, available, total = {}, 0.0, sum(metric_weights[name] for name in active)
+        scores = {}
         for name, direction in active.items():
-            result = _cross_section_score(table[name], direction, scoring_controls, table.get("Sector"))
+            # Secondary compares only the current Primary Short shortlist;
+            # sector-relative construction belongs to Primary.
+            result = _cross_section_score(table[name], direction, scoring_controls)
             scores[name] = result["score"]
             metric_score[name] = result["score"]
-            available += result["score"].notna().astype(float) * metric_weights[name]
+        grouped: dict[str, list[str]] = {}
+        for metric in active:
+            grouped.setdefault(config.SHORT_METRIC_GROUPS.get(metric, metric), []).append(metric)
+        group_scores, group_available = {}, {}
+        for group, members in grouped.items():
+            configured = sum(metric_weights[m] for m in members)
+            valid = sum(scores[m].notna().astype(float) * metric_weights[m] for m in members)
+            numerator = sum(scores[m].fillna(0) * metric_weights[m] for m in members)
+            group_coverage = valid / configured if configured else pd.Series(np.nan, index=table.index)
+            group_scores[group] = numerator / valid.replace(0, np.nan)
+            group_available[group] = (
+                group_scores[group].notna()
+                & group_coverage.ge(float(controls["MIN_FAMILY_METRIC_COVERAGE"]))
+            ).astype(float)
+            table[f"SHORT_{family.upper()} | {group} Group Score"] = group_scores[group]
+            table[f"SHORT_{family.upper()} | {group} Group Coverage"] = group_coverage
+        total = float(len(grouped))
+        available = sum(group_available.values()) if group_available else pd.Series(0.0, index=table.index)
         den = total if total else 1.0
-        coverage = available / den if isinstance(available, pd.Series) else pd.Series(float(available) / den, index=table.index)
+        coverage = available / den
         family_coverage[family] = coverage
-        if scores:
-            values = pd.DataFrame(scores, index=table.index)
-            point_values = sum(values[name].fillna(0) * metric_weights[name] for name in active)
-            valid_weights = sum(values[name].notna().astype(float) * metric_weights[name] for name in active)
+        if group_scores:
+            point_values = sum(value.fillna(0) for value in group_scores.values())
+            valid_weights = sum(value.notna().astype(float) for value in group_scores.values())
             family_score[family] = (point_values / valid_weights.replace(0, np.nan)).where(coverage.ge(float(controls["MIN_FAMILY_METRIC_COVERAGE"])))
         else:
             family_score[family] = pd.Series(np.nan, index=table.index)
@@ -100,7 +118,9 @@ def score_shorts(features: pd.DataFrame, metadata: pd.DataFrame, controls: dict[
         fit = 0.5 + 0.5 * table[f"{metric}_r2"].fillna(0).clip(0, 1)
         trend_reliability_parts[metric] = obs * fit * trend_metric_weights[metric]
     table["short_trend_reliability"] = sum(trend_reliability_parts.values()) / trend_total_weight if trend_total_weight else 0.0
-    table["short_score"] = 50 + (table["short_raw_score"] - 50) * table["short_trend_reliability"]
+    # Reliability is disclosed as a regime, not used to pull an otherwise
+    # strong score back toward neutral merely because history is short.
+    table["short_score"] = table["short_raw_score"]
 
     trend_directions = {m: d for m, d in SHORT_METRICS["trend"].items() if trend_metric_weights.get(m, 0) > 0}
     adverse = pd.DataFrame({
@@ -145,6 +165,9 @@ def score_shorts(features: pd.DataFrame, metadata: pd.DataFrame, controls: dict[
     table["short_nonpositive_equity"] = table["latest_shareholders_equity"].le(0).where(table["latest_shareholders_equity"].notna())
     table["short_nonpositive_interest_coverage"] = table["latest_interest_coverage_raw"].le(0).where(table["latest_interest_coverage_raw"].notna())
     table["short_weak_fundamental_domains"] = weak_domains.sum(axis=1, min_count=1)
+    # The audit table is deliberately wide; compact it once before the final
+    # gate/status columns so a large live shortlist does not fragment frames.
+    table = table.copy()
     table["short_trend_coverage_pass"] = family_coverage["trend"].ge(float(controls["SHORT_MIN_TREND_COVERAGE"]))
     table["short_point_in_time_coverage_pass"] = family_coverage["point_in_time"].ge(float(controls["SHORT_MIN_POINT_IN_TIME_COVERAGE"]))
     table["short_history_pass"] = table["history_years"].ge(int(controls["SHORT_MIN_HISTORY_YEARS"])) & table["trend_observations"].ge(int(controls["SHORT_MIN_TREND_OBSERVATIONS"])) & table["max_fiscal_year_gap"].le(int(controls["MAX_FISCAL_YEAR_GAP"]))
@@ -160,7 +183,12 @@ def score_shorts(features: pd.DataFrame, metadata: pd.DataFrame, controls: dict[
     table["financial_age_days"] = (evaluation_date - period_end).dt.days
     table["short_freshness_pass"] = table["financial_age_days"].between(0, int(controls["MAX_FINANCIAL_AGE_DAYS"]))
     table["short_error_pass"] = table["source_error_count"].fillna(1).eq(0) if controls["REQUIRE_BLANK_ERROR_FIELD"] else True
-    gate_cols = [c for c in table if c.startswith("short_") and c.endswith("_pass")]
+    # History, freshness, coverage and fit are data-regime diagnostics. Only
+    # source errors and substantive adverse/economic evidence reject a thesis.
+    gate_cols = [
+        "short_error_pass", "short_score_pass", "short_absolute_trend_pass",
+        "short_recent_deterioration_pass", "short_fundamental_weakness_pass",
+    ]
     table["short_eligible"] = table[gate_cols].all(axis=1)
     table["short_fail_reasons"] = table.apply(lambda r: "; ".join(c.removeprefix("short_").removesuffix("_pass") for c in gate_cols if not bool(r[c])), axis=1)
     table["short_rank"] = np.nan
@@ -180,9 +208,8 @@ def ranked_short_candidates(table: pd.DataFrame) -> pd.DataFrame:
     observations = pd.to_numeric(table.get("trend_observations", pd.Series(np.nan, index=table.index)), errors="coerce")
     gaps = pd.to_numeric(table.get("max_fiscal_year_gap", pd.Series(np.nan, index=table.index)), errors="coerce")
     source_errors = pd.to_numeric(table.get("source_error_count", pd.Series(np.nan, index=table.index)), errors="coerce")
-    valid &= (history.ge(4) & observations.ge(4)
-              & gaps.le(int(config.GENERAL_DEFAULTS["MAX_FISCAL_YEAR_GAP"]))
-              & source_errors.fillna(1).eq(0))
+    integrity = table.get("short_source_integrity_pass", pd.Series(True, index=table.index)).fillna(False).astype(bool)
+    valid &= source_errors.fillna(1).eq(0) & integrity
     return table.loc[valid].sort_values(
         ["short_score", "short_trend_reliability", "Ticker"],
         ascending=[False, False, True], kind="stable",
@@ -211,7 +238,7 @@ def _short_reason(row: pd.Series, controls: dict[str, Any], rank: int) -> str:
     recent_n = _finite(row.get("short_adverse_recent_observations"))
     breadth = []
     if np.isfinite(trend) and np.isfinite(trend_n):
-        breadth.append(f"{trend:.0%} adverse four-year directions across {int(trend_n)} observed metrics")
+        breadth.append(f"{trend:.0%} adverse recency-weighted trend directions across {int(trend_n)} observed metrics")
     if np.isfinite(recent) and np.isfinite(recent_n):
         breadth.append(f"{recent:.0%} adverse recent directions across {int(recent_n)} observed metrics")
     weak = _finite(row.get("short_weak_fundamental_domains"))
@@ -266,7 +293,7 @@ def build_short_summary(table: pd.DataFrame, controls: dict[str, Any]) -> pd.Dat
             "Primary Dataset As Of Note", "Trend Score", "Four Year Adverse Trend Breadth",
             "Recent Deterioration Breadth", "Weak Fundamental Domains", "Trend Reliability",
             "Financial Age Days", "Revenue CAGR", "Recent Revenue Growth", "Latest Net Income",
-            "Latest Net Margin", "Latest FCF", "Latest Debt / Equity", "Short Thesis Evidence", "Research Checks",
+            "Latest Net Margin", "Latest FCF", "Latest Debt / Equity", "Data Regime", "Data Regime Reasons", "Short Thesis Evidence", "Research Checks",
         ])
     return pd.DataFrame({
         "Rank": range(1, len(selected) + 1), "Ticker": selected["Ticker"],
@@ -289,10 +316,12 @@ def build_short_summary(table: pd.DataFrame, controls: dict[str, Any]) -> pd.Dat
         "Weak Fundamental Domains": selected["short_weak_fundamental_domains"],
         "Trend Reliability": selected["short_trend_reliability"],
         "Financial Age Days": selected["financial_age_days"],
+        "Data Regime": selected.get("data_regime", pd.Series("LIMITED_DATA", index=selected.index)),
+        "Data Regime Reasons": selected.get("data_regime_reasons", pd.Series("", index=selected.index)),
         "Revenue CAGR": selected["revenue_cagr"], "Recent Revenue Growth": selected["latest_revenue_growth"],
         "Latest Net Income": selected["latest_net_income"],
         "Latest Net Margin": selected["latest_net_margin"], "Latest FCF": selected["latest_free_cash_flow"],
         "Latest Debt / Equity": selected["latest_debt_to_equity"],
-        "Short Thesis Evidence": selected.apply(lambda r: f"{r['short_adverse_trend_breadth']:.0%} adverse four year breadth; {r['short_adverse_recent_breadth']:.0%} adverse recent breadth; {int(r['short_weak_fundamental_domains'])} weak fundamental domains; {r['short_trend_reliability']:.0%} trend reliability", axis=1),
+        "Short Thesis Evidence": selected.apply(lambda r: f"{r['short_adverse_trend_breadth']:.0%} adverse recency-weighted trend breadth; {r['short_adverse_recent_breadth']:.0%} adverse recent breadth; {int(r['short_weak_fundamental_domains'])} weak fundamental domains; {r['short_trend_reliability']:.0%} trend reliability", axis=1),
         "Research Checks": pd.Series(["Borrow availability, borrow fee, liquidity, catalyst and event timing are not in source data; verify before any trade."] * len(selected), index=selected.index),
     }).reset_index(drop=True)

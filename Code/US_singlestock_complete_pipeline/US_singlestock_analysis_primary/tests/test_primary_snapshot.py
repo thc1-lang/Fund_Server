@@ -81,7 +81,8 @@ def test_short_sufficiency_and_confidence_do_not_depend_on_long_weights():
         frame, {"GROWTH": 100.0, "VALUATION": 0.0}, 0.7, 0.5,
         short_family_weights={"GROWTH": 0.0, "VALUATION": 100.0},
     )
-    assert scores.loc[0, "Data Status"] == "INSUFFICIENT DATA"
+    assert scores.loc[0, "Data Status"] == "LIMITED DATA"
+    assert scores.loc[0, "Primary Data Regime"] == "LIMITED_DATA"
     assert scores.loc[0, "Short Data Status"] == "SUFFICIENT"
     assert scores.loc[0, "Short Score Confidence"] == pytest.approx(100.0)
     assert scores.loc[0, "Expanded Short Score"] == pytest.approx(90.0)

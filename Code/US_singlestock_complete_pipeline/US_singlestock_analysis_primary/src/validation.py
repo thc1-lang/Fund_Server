@@ -28,10 +28,9 @@ def validate_results(
         raise ValueError("A ticker appears in conflicting candidate directions")
     long_selected = df["Quantitative Candidate"].eq("QUANT LONG")
     short_selected = df["Quantitative Candidate"].eq("QUANT SHORT")
-    if (long_selected & df["Data Status"].ne("SUFFICIENT")).any():
-        raise ValueError("Quantitative Long candidate has insufficient data")
-    if (short_selected & df.get("Short Data Status", df["Data Status"]).ne("SUFFICIENT")).any():
-        raise ValueError("Quantitative Short candidate has insufficient data")
+    # Limited coverage is surfaced as a data regime, not converted into an
+    # economic failure. A finite, gated score remains eligible for qualitative
+    # review when the available evidence is compelling.
     short_numerators = [c for c in df if c.startswith("Quant Composite ") and c.endswith(" Short Weighted Numerator")]
     if short_numerators and "Short Applicable Weight" in df:
         rebuilt = df[short_numerators].sum(axis=1, min_count=1) / pd.to_numeric(df["Short Applicable Weight"], errors="coerce").replace(0, np.nan)
@@ -39,10 +38,9 @@ def validate_results(
         comparable = rebuilt.notna() & reported.notna()
         if (rebuilt.loc[comparable] - reported.loc[comparable]).abs().gt(1e-10).any():
             raise ValueError("Independent Short weighted numerator/denominator reconciliation failed")
-        confidence = pd.to_numeric(df.get("Short Score Confidence", df["Score Confidence"]), errors="coerce") / 100.0
         final = pd.to_numeric(df["Expanded Short Score"], errors="coerce")
-        if (final.loc[comparable] - (50 + confidence.loc[comparable] * (reported.loc[comparable] - 50))).abs().gt(1e-10).any():
-            raise ValueError("Independent Short reliability adjustment reconciliation failed")
+        if (final.loc[comparable] - reported.loc[comparable]).abs().gt(1e-10).any():
+            raise ValueError("Independent Short score reconciliation failed")
     numerator_columns = [c for c in df if c.startswith("Quant Composite ") and c.endswith(" Long Weighted Numerator")]
     if numerator_columns:
         numerator = df[numerator_columns].sum(axis=1, min_count=1)
@@ -52,11 +50,9 @@ def validate_results(
         comparable = rebuilt_raw.notna() & published_raw.notna()
         if (rebuilt_raw.loc[comparable] - published_raw.loc[comparable]).abs().gt(1e-10).any():
             raise ValueError("Quant composite weighted numerator/denominator reconciliation failed")
-        confidence = pd.to_numeric(df["Score Confidence"], errors="coerce") / 100.0
-        expected_adjusted = 50.0 + confidence * (published_raw - 50.0)
         published_adjusted = pd.to_numeric(df["Expanded Long Score"], errors="coerce")
-        if (expected_adjusted.loc[comparable] - published_adjusted.loc[comparable]).abs().gt(1e-10).any():
-            raise ValueError("Quant composite reliability adjustment reconciliation failed")
+        if (published_raw.loc[comparable] - published_adjusted.loc[comparable]).abs().gt(1e-10).any():
+            raise ValueError("Quant composite score reconciliation failed")
         contribution_columns = [c for c in df if c.startswith("Quant Composite ") and c.endswith(" Long Contribution Points")]
         contribution_sum = df[contribution_columns].sum(axis=1, min_count=1)
         if (contribution_sum.loc[comparable] - published_raw.loc[comparable]).abs().gt(1e-10).any():
@@ -75,9 +71,6 @@ def validate_results(
             raise ValueError(f"{candidate} falls below configured threshold {threshold}")
         if total_maximum is not None and selected.sum() > total_maximum:
             raise ValueError(f"{candidate} exceeds universe-wide maximum {total_maximum}")
-        confidence_col = "Short Score Confidence" if candidate == "QUANT SHORT" and "Short Score Confidence" in df else "Score Confidence"
-        if min_confidence is not None and df.loc[selected, confidence_col].lt(min_confidence).any():
-            raise ValueError(f"{candidate} falls below confidence threshold {min_confidence}")
     for direction, flag in [("QUANT LONG", "tradability_gate_pass"), ("QUANT LONG", "balance_sheet_gate_pass"), ("QUANT SHORT", "short_tradability_gate_pass")]:
         if flag in df and not df.loc[df["Quantitative Candidate"].eq(direction), flag].fillna(False).all():
             raise ValueError(f"{direction} fails {flag}")

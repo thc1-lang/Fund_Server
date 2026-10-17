@@ -188,7 +188,7 @@ def validate_controls(controls: dict[str, Any]) -> None:
         "MIN_SELECTION_WEIGHT_COVERAGE_TURNAROUND_STORY", "MIN_EFFECTIVE_TREND_RELIABILITY_SAFE",
         "MIN_EFFECTIVE_TREND_RELIABILITY_HIGH_GROWTH_POTENTIAL", "MIN_EFFECTIVE_TREND_RELIABILITY_TURNAROUND_STORY",
         "SAFE_MIN_POSITIVE_HISTORY_SHARE", "TURNAROUND_MIN_FAVOURABLE_TREND_BREADTH",
-        "SECTOR_PEER_WEIGHT", "MIN_RECENT_FAVOURABLE_BREADTH",
+        "MIN_RECENT_FAVOURABLE_BREADTH",
         "MIN_FAVOURABLE_TREND_BREADTH", "MIN_RECENT_METRIC_COVERAGE",
         "SHORT_MIN_TREND_COVERAGE", "SHORT_MIN_POINT_IN_TIME_COVERAGE", "SHORT_MIN_TREND_RELIABILITY", "SHORT_MIN_WEIGHT_COVERAGE",
         "SHORT_MAX_POSITIVE_REVENUE_GROWTH_SHARE",
@@ -204,8 +204,6 @@ def validate_controls(controls: dict[str, Any]) -> None:
         errors.append("ROBUST_Z_CAP must be positive")
     if float(controls["CROSS_SECTION_SHRINKAGE_STRENGTH"]) < 0:
         errors.append("CROSS_SECTION_SHRINKAGE_STRENGTH cannot be negative")
-    if float(controls["SECTOR_PEER_SHRINKAGE_STRENGTH"]) < 0:
-        errors.append("SECTOR_PEER_SHRINKAGE_STRENGTH cannot be negative")
     if not 1 <= int(controls["SHORT_MIN_DIRECTION_OBSERVATIONS"]) <= 6:
         errors.append("SHORT_MIN_DIRECTION_OBSERVATIONS must be between 1 and 6")
     if int(controls["SHORT_MIN_CROSS_SECTION_OBSERVATIONS"]) < 2:
@@ -235,8 +233,6 @@ def validate_controls(controls: dict[str, Any]) -> None:
                ("primary_short_score", "primary_price_change_4w", "primary_price_change_12w", "primary_f1_estimate_change_4w", "primary_f2_estimate_change_4w"),
            ))):
         errors.append("Each active short family needs at least one positive metric weight")
-    if int(controls["MIN_SECTOR_PEER_OBSERVATIONS"]) < 2:
-        errors.append("MIN_SECTOR_PEER_OBSERVATIONS must be at least 2")
     for key in ("MISSING_TREND_PENALTY_POINTS", "NO_USABLE_TREND_EXTRA_PENALTY_POINTS"):
         if float(controls[key]) < 0:
             errors.append(f"{key} cannot be negative")

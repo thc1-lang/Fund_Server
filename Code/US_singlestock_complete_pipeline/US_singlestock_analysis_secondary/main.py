@@ -80,7 +80,10 @@ def main() -> int:
                 "rankable": 0, "selected": 0, "top_tickers": [],
             }
             continue
-        features = build_features(datasets[category], int(controls["MIN_TREND_OBSERVATIONS"]))
+        features = build_features(
+            datasets[category], int(controls["MIN_TREND_OBSERVATIONS"]),
+            float(controls["TREND_RECENCY_DECAY"]),
+        )
         analysis = score_category(features, metadata[category], category, controls, as_of=as_of)
         analysis = append_missing_primary(analysis, metadata[category], as_of)
         analysis = apply_integrity_gate(analysis, category_audit)
@@ -111,7 +114,10 @@ def main() -> int:
         short_analysis["short_history_pass"] = False
         short_analysis["short_fail_reasons"] = "missing_source_history"
     else:
-        short_features = build_features(short_raw, int(controls["SHORT_MIN_TREND_OBSERVATIONS"]))
+        short_features = build_features(
+            short_raw, int(controls["SHORT_MIN_TREND_OBSERVATIONS"]),
+            float(controls["TREND_RECENCY_DECAY"]),
+        )
         short_analysis = score_shorts(short_features, short_metadata, controls, as_of)
         scored_tickers = set(short_analysis["Ticker"].astype(str).str.upper())
         missing_history = short_metadata.loc[~short_metadata["Ticker"].isin(scored_tickers)].copy()
@@ -169,7 +175,7 @@ def main() -> int:
     if short_summary.empty:
         short_note = (
             f"NO RANKABLE SHORTS: {len(primary_tickers)} primary Short candidates; {len(history_tickers)} have annual history, "
-            "but none has a valid four-year scored history free of source errors."
+            "but none has a finite score free of source-integrity failures."
         )
     else:
         short_note = (
@@ -192,6 +198,7 @@ def main() -> int:
             book, worksheets, controls, analyses, summaries, registry, run_audit, short_summary,
             short_note=short_note, short_only=args.short_live, short_analysis=short_analysis,
             primary_shortlist=primary_shortlist, short_as_of=as_of, short_data=short_data,
+            source_audit=source_audit,
         )
     if args.live or args.short_live:
         result["tabs_deleted"] = delete_retired_output_tabs(book, worksheets)

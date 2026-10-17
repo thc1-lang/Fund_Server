@@ -16,6 +16,8 @@ AUDIT_COLUMNS = [
     "Shares Outstanding", "Year End Price", "Price Currency", "Revenue Filed",
     "Integrity Flags", "Integrity Pass", "Missing Essential Fields",
     "Provenance Missing Fields", "Provenance Complete", "Research Traceable",
+    "Financial Statement Coverage", "Temporal Coverage", "Market Data Alignment Status",
+    "Statement Reconciliation Status", "Data Regime", "Data Regime Reasons",
 ]
 
 
@@ -129,11 +131,48 @@ def audit_source_rows(category: str, source: pd.DataFrame, primary: pd.DataFrame
         present = (frame[field].notna() & frame[field].astype(str).str.strip().ne("")) if field in frame else pd.Series(False, index=frame.index)
         research &= present
     result["Research Traceable"] = research
+    # Missing fields are a research regime, not an economic score penalty.  An
+    # analyst needs to distinguish limited disclosure/extraction from a stock
+    # failing on the underlying characteristic.
+    statement_fields = (
+        "Revenue", "Net Income", "Operating Income", "Total Assets", "Total Liabilities",
+        "Shareholders Equity", "Operating Cash Flow", "Capital Expenditure", "Free Cash Flow",
+        "Current Assets", "Current Liabilities", "Cash", "Total Debt",
+    )
+    present_count = sum(
+        (frame[field].notna() & frame[field].astype(str).str.strip().ne(""))
+        if field in frame else pd.Series(False, index=frame.index)
+        for field in statement_fields
+    )
+    result["Financial Statement Coverage"] = present_count / len(statement_fields)
+    result["Temporal Coverage"] = dates.notna().astype(float) * filed.notna().astype(float)
+    result["Market Data Alignment Status"] = frame.get(
+        "Market Data Alignment Status", pd.Series("UNAVAILABLE_OR_UNALIGNED", index=frame.index)
+    ).fillna("UNAVAILABLE_OR_UNALIGNED")
+    result["Statement Reconciliation Status"] = frame.get(
+        "Statement Reconciliation Status", pd.Series("REVIEW_REQUIRED", index=frame.index)
+    ).fillna("REVIEW_REQUIRED")
+    regime_reasons = []
+    regimes = []
+    for i in frame.index:
+        reasons = []
+        if result.loc[i, "Financial Statement Coverage"] < 0.75:
+            reasons.append("INCOMPLETE_FINANCIAL_STATEMENTS")
+        if not bool(result.loc[i, "Provenance Complete"]):
+            reasons.append("INCOMPLETE_PROVENANCE")
+        if result.loc[i, "Market Data Alignment Status"] != "ALIGNED":
+            reasons.append("MARKET_DATA_UNALIGNED")
+        if result.loc[i, "Statement Reconciliation Status"] != "RECONCILED":
+            reasons.append("ACCOUNTING_REVIEW_REQUIRED")
+        regime_reasons.append("; ".join(reasons))
+        regimes.append("STANDARD_DATA" if not reasons else "LIMITED_DATA")
+    result["Data Regime"] = regimes
+    result["Data Regime Reasons"] = regime_reasons
     return result[AUDIT_COLUMNS]
 
 
 def apply_integrity_gate(analysis: pd.DataFrame, audit: pd.DataFrame, *, short: bool = False) -> pd.DataFrame:
-    """Reject anomalous or incomplete latest source rows without changing scores."""
+    """Reject contradictory source rows; surface missing-data regimes without score penalties."""
     result = analysis.copy()
     gate = "short_source_integrity_pass" if short else "source_integrity_gate_pass"
     essential_gate = "short_source_essential_pass" if short else "source_essential_gate_pass"
@@ -149,10 +188,19 @@ def apply_integrity_gate(analysis: pd.DataFrame, audit: pd.DataFrame, *, short: 
         essential_by_ticker = pd.Series(dtype=bool)
     result[gate] = result["Ticker"].map(clean_by_ticker).fillna(False).astype(bool)
     result[essential_gate] = result["Ticker"].map(essential_by_ticker).fillna(False).astype(bool)
-    result[eligible] = result[eligible].fillna(False).astype(bool) & result[gate] & result[essential_gate]
+    latest_by_ticker = audit.sort_values("Fiscal Period End", na_position="first").groupby("Ticker", sort=False).tail(1).set_index("Ticker") if not audit.empty else pd.DataFrame()
+    source_regime = result["Ticker"].map(latest_by_ticker.get("Data Regime", pd.Series(dtype=object))).fillna("LIMITED_DATA")
+    source_reasons = result["Ticker"].map(latest_by_ticker.get("Data Regime Reasons", pd.Series(dtype=object))).fillna("MISSING_SOURCE_AUDIT")
+    screening_regime = result.get("data_regime", pd.Series("LIMITED_DATA", index=result.index)).fillna("LIMITED_DATA")
+    screening_reasons = result.get("data_regime_reasons", pd.Series("", index=result.index)).fillna("")
+    result["data_regime"] = np.where(
+        ~result[gate], "DATA_FAILURE", np.where(source_regime.eq("STANDARD_DATA") & screening_regime.eq("STANDARD_DATA"), "STANDARD_DATA", "LIMITED_DATA")
+    )
+    result["data_regime_reasons"] = (source_reasons.astype(str).str.strip("; ") + "; " + screening_reasons.astype(str).str.strip("; ")).str.strip("; ")
+    # A genuine anomaly remains a data failure. Missing fields stay visible as
+    # LIMITED_DATA and never change the score or automatically eliminate a name.
+    result[eligible] = result[eligible].fillna(False).astype(bool) & result[gate]
     old = result[reasons].fillna("").astype(str)
     result[reasons] = old.where(result[gate], old.str.rstrip("; ") + "; source_integrity")
-    old = result[reasons]
-    result[reasons] = old.where(result[essential_gate], old.str.rstrip("; ") + "; source_essential")
     result[reasons] = result[reasons].str.lstrip("; ")
     return result

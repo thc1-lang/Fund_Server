@@ -43,7 +43,7 @@ def score_strategies(
     not become zero; eligibility requires both weight coverage and component count.
     """
     columns: dict[str, object] = {}
-    base_data = df["Data Status"].eq("SUFFICIENT") & df.get("Fundamental Business Type Gate Pass", pd.Series(True, index=df.index)).fillna(False)
+    base_data = df.get("Fundamental Business Type Gate Pass", pd.Series(True, index=df.index)).fillna(False)
     financial = df.get("financial_sector_leverage_exemption", pd.Series(False, index=df.index)).fillna(False).astype(bool)
     for strategy, weights in strategy_weights.items():
         total_weight = float(sum(float(w) for w in weights.values() if float(w) > 0))
@@ -96,11 +96,16 @@ def score_strategies(
     turnaround_eps = df.get("eps_growth_valid_for_safe", pd.Series(False, index=df.index)).fillna(False).astype(bool) if require_positive_eps_turnaround else pd.Series(True, index=df.index)
     safe_risk_pass = base_balance_pass & safe_eps
     columns["Safe Balance-Sheet Gate Pass"] = safe_risk_pass
-    columns["Safe Eligible"] = base_data & columns["Safe Minimum Data Pass"] & safe_risk_pass
+    # Limited coverage is reviewable rather than a veto, but a name with no
+    # observed score at all cannot be presented as quantitatively eligible.
+    columns["Safe Eligible"] = base_data & safe_risk_pass & columns["Safe Score Before Gates"].notna()
     columns["Safe Score"] = columns["Safe Score Before Gates"].where(columns["Safe Eligible"])
 
     columns["High Growth Potential Balance-Sheet Gate Pass"] = high_growth_balance_pass
-    columns["High Growth Potential Eligible"] = base_data & columns["High Growth Potential Minimum Data Pass"] & high_growth_balance_pass & high_growth_eps
+    columns["High Growth Potential Eligible"] = (
+        base_data & high_growth_balance_pass & high_growth_eps
+        & columns["High Growth Potential Score Before Gates"].notna()
+    )
     columns["High Growth Potential Score"] = columns["High Growth Potential Score Before Gates"].where(
         columns["High Growth Potential Eligible"]
     )
@@ -114,7 +119,10 @@ def score_strategies(
     columns["Turnaround Profitability Score"] = profitability
     columns["Turnaround Setup Gate Pass"] = setup_pass
     columns["Turnaround Story Balance-Sheet Gate Pass"] = turnaround_balance_pass
-    columns["Turnaround Story Eligible"] = base_data & columns["Turnaround Story Minimum Data Pass"] & setup_pass & turnaround_balance_pass & turnaround_eps
+    columns["Turnaround Story Eligible"] = (
+        base_data & setup_pass & turnaround_balance_pass & turnaround_eps
+        & columns["Turnaround Story Score Before Gates"].notna()
+    )
     columns["Turnaround Story Score"] = columns["Turnaround Story Score Before Gates"].where(
         columns["Turnaround Story Eligible"]
     )

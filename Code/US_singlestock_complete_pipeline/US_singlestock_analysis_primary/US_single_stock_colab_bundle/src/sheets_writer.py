@@ -119,12 +119,14 @@ def _industry_values(table: pd.DataFrame) -> list[list[object]]:
                            "Safe Score", "High Growth Potential Score", "Turnaround Story Score",
                            "Positive Peer Evidence Count", "Negative Peer Evidence Count", "Excessive Working Capital Flag",
                            "Unsustainable Payout Flag", "Implementation Feasibility Note", "Implementation Candidate",
-                           "short_implementation_validation_required", "economic_business_type", "margin_reconciliation_status", "Data Status", "Short Data Status"] if c in table]
+                           "short_implementation_validation_required", "economic_business_type", "margin_reconciliation_status", "Data Status", "Short Data Status",
+                           "Primary Data Regime", "Primary Data Regime Reasons", "primary_financial_statement_coverage_score",
+                           "primary_source_verification_status", "institutional_underwriting_readiness"] if c in table]
     display_headers = [{
         "Expanded Long Rank": "Quant Long Rank",
-        "Expanded Long Score": "Quant Long Score (Coverage Adjusted)",
+        "Expanded Long Score": "Quant Long Score",
         "Expanded Short Rank": "Quant Short Rank",
-        "Expanded Short Score": "Quant Short Score (Coverage Adjusted)",
+        "Expanded Short Score": "Quant Short Score",
         "Expanded Net Quant Score": "Quant Net Score",
         "Score Confidence": "Coverage Confidence",
         "Expanded Family Coverage": "Quant Family Weight Coverage",
@@ -152,7 +154,10 @@ def _risk_flags(row: pd.Series) -> str:
     flags = []
     data_status = row.get("Short Data Status", row.get("Data Status")) if row.get("Quantitative Candidate") == "QUANT SHORT" else row.get("Data Status")
     if data_status != "SUFFICIENT":
-        flags.append(str(data_status or "INSUFFICIENT DATA"))
+        flags.append(str(data_status or "LIMITED DATA"))
+    regime = row.get("Primary Data Regime")
+    if regime and regime != "STANDARD_DATA":
+        flags.append(str(regime))
     if row.get("Excessive Working Capital Flag") is True:
         flags.append("EXCESS WORKING CAPITAL")
     if row.get("Unsustainable Payout Flag") is True:
@@ -344,6 +349,13 @@ def build_strategy_summary(
     out["Components Available"] = selected[f"{strategy} Components Available"]
     out["Components Missing"] = selected[f"{strategy} Components Missing"]
     out["Existing Data Status"] = selected["Data Status"]
+    if "Primary Data Regime" in selected:
+        out["Data Regime"] = selected["Primary Data Regime"]
+        out["Data Regime Reasons"] = selected.get("Primary Data Regime Reasons")
+    if "primary_financial_statement_coverage_score" in selected:
+        out["Financial Statement Coverage"] = selected["primary_financial_statement_coverage_score"] / 100
+    if "primary_source_verification_status" in selected:
+        out["Source Verification"] = selected["primary_source_verification_status"]
     out["Quantitative Candidate"] = selected.get("Quantitative Candidate")
     out["Implementation Eligible"] = selected.get(f"{strategy} Implementation Eligible")
     out["Tradability Gate Pass"] = selected.get("tradability_gate_pass")
@@ -822,7 +834,8 @@ def archive_stale_generated_tabs(book, sheet_metadata, active_industries) -> lis
     return archived
 
 
-def ensure_analysis_sheets(book, industries, sheet_metadata, helper_column_count: int = 900, industry_sizes: dict[str, int] | None = None):
+def ensure_analysis_sheets(book, industries, sheet_metadata, helper_column_count: int = 900,
+                           industry_sizes: dict[str, int] | None = None, create_industry_tabs: bool = False):
     """Create generated sheets once, remove deprecated summaries, and order tabs."""
     industries = [str(x) for x in industries]
     industry_sizes = industry_sizes or {}
@@ -850,6 +863,13 @@ def ensure_analysis_sheets(book, industries, sheet_metadata, helper_column_count
                 "title": title, "gridProperties": {"rowCount": 60, "columnCount": 40}
             }}})
     for industry in industries:
+        if industry not in existing and create_industry_tabs:
+            row_count = max(30, int(industry_sizes.get(industry, 0)) + 20)
+            allocated_cells += row_count * 40
+            requests.append({"addSheet": {"properties": {
+                "title": industry,
+                "gridProperties": {"rowCount": row_count, "columnCount": 40},
+            }}})
         title = helper_sheet_name(industry)
         if title not in existing:
             row_count = max(10, int(industry_sizes.get(industry, 0)) + 3)

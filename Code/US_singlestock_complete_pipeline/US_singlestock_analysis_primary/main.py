@@ -155,6 +155,10 @@ def run(args) -> dict:
     result = pd.concat([result, short_thesis.rename("Short Thesis Gate Pass")], axis=1)
     result = pd.concat([result, result["economic_business_type"].isin(config.SHORT_ALLOWED_BUSINESS_TYPES).rename("Short Business Type Gate Pass")], axis=1)
     result = pd.concat([result, reconciliation_flags(result, config.PB_VALIDATION_TOLERANCE, config.MARKET_CAP_PER_SHARE_TOLERANCE)], axis=1)
+    market_alignment = ~result["Market Cap Per Share Flag"].fillna(True)
+    result["Primary Market Data Alignment Status"] = market_alignment.map({True: "ALIGNED_VENDOR_SNAPSHOT", False: "REVIEW_REQUIRED"})
+    result["Primary Source As Of"] = config.DATA_AS_OF or "NOT_PROVIDED"
+    result["Primary Point-in-Time Regime"] = "UNVERIFIED_VENDOR_SNAPSHOT"
     result = rank_quant_candidates(
         result, config.TOP_N_LONG, config.TOP_N_SHORT, config.MIN_LONG_SCORE, config.MIN_SHORT_SCORE,
         config.MAX_QUANT_LONGS_TOTAL, config.MAX_QUANT_SHORTS_TOTAL,
@@ -234,8 +238,8 @@ def run(args) -> dict:
         "quant_long_count": int(result["Quantitative Candidate"].eq("QUANT LONG").sum()),
         "short_selection_count": int(result["Short Selected"].sum()),
         "quant_short_count": int(result["Quantitative Candidate"].eq("QUANT SHORT").sum()),
-        "insufficient_data_count": int(result["Data Status"].eq("INSUFFICIENT DATA").sum()),
-        "short_insufficient_data_count": int(result["Short Data Status"].eq("INSUFFICIENT DATA").sum()),
+        "limited_data_count": int(result["Data Status"].eq("LIMITED DATA").sum()),
+        "short_limited_data_count": int(result["Short Data Status"].eq("LIMITED DATA").sum()),
         "safe_scored_count": int(result["Safe Score"].notna().sum()),
         "high_growth_potential_scored_count": int(result["High Growth Potential Score"].notna().sum()),
         "turnaround_story_scored_count": int(result["Turnaround Story Score"].notna().sum()),
